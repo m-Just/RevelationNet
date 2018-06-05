@@ -13,20 +13,18 @@ def accuracy(pred, labels):
     correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(labels, 1))
     return tf.reduce_mean(tf.cast(correct_pred, tf.float32), 0)
 
-def evaluate(sess, adv_imgs, labels, target):
+def evaluate(sess, eval_acc, x, y_, adv_imgs, labels, target):
     print('Start evaluation...')
     n = len(adv_imgs)
 
     fidelity = 0.
-    targeted = 0.
+    deceived = 0.
     for img, y in zip(adv_imgs, labels):
-        fidelity += sess.run(accuracy, feed_dict={x: img, y_: [y]})
-        targeted += sess.run(accuracy, feed_dict={x: img, y_: [target]})
-    fidelity /= n
-    targeted /= n
+        fidelity += sess.run(eval_acc, feed_dict={x: img, y_: [y]})
+        deceived += sess.run(eval_acc, feed_dict={x: img, y_: [target]})
 
-    print('Fidelity on test set: %f' % fidelity)
-    print('Targeted on test set: %f' % targeted)
+    print('Fidelity rate on test set: %f' % (fidelity / n))
+    print('Deceived rate on test set: %f' % (deceived / n))
 
 def train_classifier():
     from cifar10_classifier import Classifier
@@ -82,9 +80,7 @@ def noise_defense():
     num_classes = 10
     target_label = 0
     eps_val = 0.3
-    num_samples = 1000
-
-    (x_train, y_train), (x_test, y_test) = data_loader.load_original_data()
+    num_samples = 200
 
     x = tf.Variable(tf.zeros([imgsize, imgsize, 3]))
     y_= tf.placeholder(tf.float32, [1, num_classes])
@@ -92,6 +88,8 @@ def noise_defense():
     with tf.variable_scope('conv') as scope:
         model = NoisyClassifier(x)
     pred = tf.nn.softmax(model.logits)
+    eval_acc = accuracy(pred, y_)
+
     fgsm_agent = Generator(imgsize, x, model.logits)
 
     sess = tf.Session()
@@ -102,17 +100,19 @@ def noise_defense():
 
     adv_imgs = []
     y_real = []
+    (x_train, y_train), (x_test, y_test) = data_loader.load_original_data()
     for i, sample in enumerate(zip(x_test, y_test)):
+        if i >= num_samples: break 
         sample_x, sample_y = sample
-        acc = sess.run(accuracy(pred, y_), feed_dict={x: sample_x, y_: [sample_y]})
-        if acc == 1 and np.argmax(sample_y) != target_label:
+        acc_val = sess.run(eval_acc, feed_dict={x: sample_x, y_: [sample_y]})
+        if acc_val == 1 and np.argmax(sample_y) != target_label:
             adv_img = fgsm_agent.generate(sess, sample_x, target_label, eps_val=eps_val)
             adv_imgs.append(adv_img)
             y_real.append(sample_y)
-        if i >= num_samples: break 
 
     print('Generated adversarial images %d/%d' % (len(adv_imgs), num_samples))
-    evaluate(sess, adv_imgs, y_real, np.eye(num_classes)[target_label])
+    y_target = np.eye(num_classes)[target_label]
+    evaluate(sess, eval_acc, x, y_, adv_imgs, y_real, y_target)
 
     print(len(adv_imgs))
 
