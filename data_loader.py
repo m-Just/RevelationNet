@@ -3,6 +3,7 @@ from keras.datasets import cifar10
 from keras.preprocessing.image import ImageDataGenerator
 
 def load_original_data():
+    num_classes = 10
     (x_train, y_train), (x_test, y_test) = cifar10.load_data()
 
     y_train = keras.utils.to_categorical(y_train, num_classes)

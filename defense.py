@@ -79,13 +79,15 @@ class NoisyClassifier():
 
     def noisy_conv2d(self, inputs, filters, kernel_size, padding, strides, activation, name, noise_on_kernel=True, noise_on_bias=True):
         in_filters = inputs.get_shape().as_list()[-1]
+        kernel_shape = [kernel_size, kernel_size, in_filters, filters]
+        bias_shape = [filters]
 
         kernel = tf.get_variable(name + '/kernel',
-            shape=[kernel_size, kernel_size, in_filters, filters],
+            shape = kernel_shape,
             dtype=tf.float32,
             initializer=tf.truncated_normal_initializer())
         bias = tf.get_variable(name + '/bias',
-            shape=[filters],
+            shape=bias_shape,
             dtype=tf.float32,
             initializer=tf.zeros_initializer())
             
@@ -101,17 +103,20 @@ class NoisyClassifier():
         return activation(tf.nn.bias_add(conv, bias))
 
     def noisy_dense(self, inputs, units, activation, name, noise_on_kernel=True, noise_on_bias=True):
+        kernel_shape = inputs.get_shape().as_list()[1:] + [units]
+        bias_shape = [units]
+
         kernel = tf.get_variable(name + '/kernel',
-            shape=inputs.get_shape()[1:] + [units],
+            shape=kernel_shape,
             dtype=tf.float32,
             initializer=tf.truncated_normal_initializer())
         bias = tf.get_variable(name + '/bias',
-            shape=[units],
+            shape=bias_shape,
             dtype=tf.float32,
             initializer=tf.zeros_initializer())
 
-        kernel_noise = tf.random_normal(shape = kernel_shape, stddev= 0.5)
-        bias_noise = tf.random_normal(shape = bias_shape, stddev= 0.5)
+        kernel_noise = tf.random_normal(shape=kernel_shape, stddev=0.5)
+        bias_noise = tf.random_normal(shape=bias_shape, stddev=0.5)
 
         if noise_on_kernel:
             kernel = tf.multiply(1 + kernel_noise, kernel)

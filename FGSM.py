@@ -21,7 +21,7 @@ class Generator():
         with tf.control_dependencies([projected]):
             self.project_step = tf.assign(self.x_adv, projected)
 
-    def generate(sess, image, target, eps_val=0.01, lr_val=1e-1, num_steps=100):
+    def generate(self, sess, image, target, eps_val=0.01, lr_val=1e-1, num_steps=100):
         sess.run(self.assign_op, feed_dict={self.x: image})
 
         for i in range(num_steps):

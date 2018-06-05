@@ -6,7 +6,7 @@ import numpy as np
 import data_loader
 
 SAVE_DIR = os.path.join(os.getcwd(), 'saved_models')
-MODEL_NAME = 'keras_cifar10_trained_model.h5'
+MODEL_NAME = 'keras_cifar10_trained_model'
 CLASSIFIER_PATH = os.path.join(SAVE_DIR, MODEL_NAME)
 
 def accuracy(pred, labels):
@@ -24,11 +24,12 @@ def train_classifier():
 
     opt = SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
 
-    model = Classifier().model
-    model.compile(
-        loss='categorical_crossentropy',
-        optimizer=opt,
-        metrics=['accuracy'])
+    with tf.variable_scope('conv') as scope:
+        model = Classifier().model
+        model.compile(
+            loss='categorical_crossentropy',
+            optimizer=opt,
+            metrics=['accuracy'])
 
     if data_augmentation:
         print('Using real-time data augmentation.')
@@ -49,7 +50,11 @@ def train_classifier():
 
     if not os.path.isdir(SAVE_DIR):
         os.makedirs(SAVE_DIR)
-    model.save(CLASSIFIER_PATH)
+    #model.save(CLASSIFIER_PATH)
+    from keras.backend import get_session
+    sess = get_session()
+    saver = tf.train.Saver()
+    saver.save(sess, CLASSIFIER_PATH)
     print('Saved trained model at %s ' % CLASSIFIER_PATH)
 
     scores = model.evaluate(x_test, y_test, verbose=1)
@@ -85,12 +90,16 @@ def noise_defense():
     y_real = []
     for i, sample in enumerate(zip(x_test, y_test)):
         sample_x, sample_y = sample
-        acc = sess.run(accuracy(pred, y_), feed_dict={x: sample_x, y: [sample_y]})
+        acc = sess.run(accuracy(pred, y_), feed_dict={x: sample_x, y_: [sample_y]})
         if acc == 1 and np.argmax(sample_y) != target_label:
             adv_img = fgsm_agent.generate(sess, sample_x, target_label, eps_val=eps_val)
             adv_imgs.append(adv_img)
             y_real.append(sample_y)
-        if i >= test_sample: break 
+        #if i >= test_sample: break 
 
     adv_imgs = np.stack(adv_imgs, axis=0)
     print(adv_imgs.shape)
+
+if __name__ == '__main__':
+    #train_classifier()
+    noise_defense()
