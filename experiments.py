@@ -217,5 +217,5 @@ def noise_defense():
     print(len(adv_imgs))
 
 if __name__ == '__main__':
-    #train_classifier()
+    #train_keras_classifier()
     noise_defense()

@@ -91,7 +91,7 @@ class Classifier(object):
             name = 'dense_3',
         )
 
-def NoisyClassifier(Classifier):
+class NoisyClassifier(Classifier):
     def __init__(self, x, expand_dim=True,
         noise_on_conv=None,
         noise_on_dense='uniform',
@@ -99,9 +99,9 @@ def NoisyClassifier(Classifier):
         noise_maxval=1,
         noise_stddev=1):
         
-        super(Classifier, self).__init__(x, expand_dim, self.noisy_conv2d, self.noisy_dense)
+        super(NoisyClassifier, self).__init__(x, None, expand_dim, self.noisy_conv2d, self.noisy_dense)
 
-    def noisy_conv2d(self, inputs, filters, kernel_size, padding, strides, activation, regularizer, name, noise_on_kernel=True, noise_on_bias=True):
+    def noisy_conv2d(self, inputs, filters, kernel_size, padding, strides, activation, kernel_regularizer, name, noise_on_kernel=True, noise_on_bias=True):
         in_filters = inputs.get_shape().as_list()[-1]
         kernel_shape = [kernel_size, kernel_size, in_filters, filters]
         bias_shape = [filters]
@@ -110,7 +110,7 @@ def NoisyClassifier(Classifier):
             shape = kernel_shape,
             dtype=tf.float32,
             initializer=tf.truncated_normal_initializer(),
-            regularizer=regularizer)
+            regularizer=kernel_regularizer)
         bias = tf.get_variable(name + '/bias',
             shape=bias_shape,
             dtype=tf.float32,
@@ -127,7 +127,7 @@ def NoisyClassifier(Classifier):
         conv = tf.nn.conv2d(inputs, kernel, [1, strides, strides, 1], padding, name=name)
         return activation(tf.nn.bias_add(conv, bias))
 
-    def noisy_dense(self, inputs, units, activation, regularizer, name, noise_on_kernel=True, noise_on_bias=True):
+    def noisy_dense(self, inputs, units, activation, kernel_regularizer, name, noise_on_kernel=True, noise_on_bias=True):
         kernel_shape = inputs.get_shape().as_list()[1:] + [units]
         bias_shape = [units]
 
@@ -135,7 +135,7 @@ def NoisyClassifier(Classifier):
             shape=kernel_shape,
             dtype=tf.float32,
             initializer=tf.truncated_normal_initializer(),
-            regularizer=regularizer)
+            regularizer=kernel_regularizer)
         bias = tf.get_variable(name + '/bias',
             shape=bias_shape,
             dtype=tf.float32,
