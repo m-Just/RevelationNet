@@ -1,4 +1,5 @@
-import os    
+import os
+import random
 
 import tensorflow as tf
 import numpy as np
@@ -101,9 +102,13 @@ def noise_defense():
     adv_imgs = []
     y_real = []
     (x_train, y_train), (x_test, y_test) = data_loader.load_original_data()
-    for i, sample in enumerate(zip(x_test, y_test)):
-        if i >= num_samples: break 
-        sample_x, sample_y = sample
+    
+    indices = range(len(y_test))
+    random.shuffle(indices)
+    for i in range(num_samples):
+        sample_x = x_test[indices[i]]
+        sample_y = y_test[indices[i]]
+        
         acc_val = sess.run(eval_acc, feed_dict={x: sample_x, y_: [sample_y]})
         if acc_val == 1 and np.argmax(sample_y) != target_label:
             adv_img = fgsm_agent.generate(sess, sample_x, target_label, eps_val=eps_val)
