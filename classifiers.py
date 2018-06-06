@@ -3,7 +3,7 @@ import tensorflow as tf
 class Classifier(object):
     def __init__(self, x, expand_dim=True,
         conv_layer=tf.layers.conv2d,
-        dense_layer=tf.layers.dense2d):
+        dense_layer=tf.layers.dense):
 
         self.conv_layer = conv_layer
         self.dense_layer = dense_layer
@@ -89,7 +89,7 @@ def NoisyClassifier(Classifier):
         noise_on_dense='uniform',
         noise_minval=0,
         noise_maxval=1,
-        noise_stddev=1)
+        noise_stddev=1):
         
         super(Classifier, self).__init__(x, expand_dim, self.noisy_conv2d, self.noisy_dense)
 

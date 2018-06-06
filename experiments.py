@@ -43,18 +43,19 @@ def train_classifier():
     data_train = tf.data.Dataset.from_tensor_slices((x_train, y_train)).shuffle(50000).repeat().batch(128)
     iter_train = data_train.make_initializable_iterator()
 
-    x = tf.Variable(tf.zeros([batch_size, imgsize, imgsize, 3]))
+    x = tf.placeholder(tf.float32, [batch_size, imgsize, imgsize, 3])
     y_= tf.placeholder(tf.float32, [batch_size, num_classes])
 
-    model = Classifier(x, expand_dims=False)
-    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=model.logits, labels=y_)
-    eval_acc = accuracy(models.logits, y_)
+    with tf.variable_scope('conv') as scope:
+        model = Classifier(x, expand_dim=False)
+    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=model.logits, labels=y_))
+    eval_acc = accuracy(model.logits, y_)
 
     optimizer = tf.train.MomentumOptimizer(
         learning_rate=0.01,
         momentum=0.9,
         use_nesterov=True)
-    optimizer.minimize(loss=loss)
+    optim_step = optimizer.minimize(loss=loss)
 
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
@@ -63,9 +64,10 @@ def train_classifier():
     for n_epoch in range(max_epoch):
         for i in range(50000 / batch_size):
             batch = sess.run(iter_train.get_next())
-            acc_val, loss_val = sess.run([eval_acc, loss],
+            _, acc_val, loss_val = sess.run([optim_step, eval_acc, loss],
                 feed_dict={x: batch[0], y_: batch[1]})
-            print("Epoch: %d, Step: %d, Acc: %f, Loss: %f" % (n_epoch, i, acc_val, loss_val))
+            if i % 10 == 0:
+                print("Epoch: %d, Step: %d, Acc: %f, Loss: %f" % (n_epoch, i, acc_val, loss_val))
 
     saver = tf.train.Saver()
     saver.save(sess, CLASSIFIER_PATH)
@@ -169,5 +171,5 @@ def noise_defense():
     print(len(adv_imgs))
 
 if __name__ == '__main__':
-    #train_classifier()
-    noise_defense()
+    train_classifier()
+    #noise_defense()
