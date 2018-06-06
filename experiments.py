@@ -50,7 +50,7 @@ def train_classifier():
     regularizer = tf.contrib.layers.l2_regularizer(scale=weight_decay)
     with tf.variable_scope('conv') as scope:
         model = Classifier(x, regularizer, expand_dim=False)
-    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=model.logits, labels=y_))
+    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=model.logits, labels=y_)) + tf.losses.get_regularization_loss()
 
     eval_acc = accuracy(model.logits, y_)
 
