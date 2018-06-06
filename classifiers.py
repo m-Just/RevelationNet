@@ -1,10 +1,11 @@
 import tensorflow as tf
 
 class Classifier(object):
-    def __init__(self, x, expand_dim=True,
+    def __init__(self, x, regularizer=None, expand_dim=True,
         conv_layer=tf.layers.conv2d,
         dense_layer=tf.layers.dense):
 
+        self.regularizer = regularizer
         self.conv_layer = conv_layer
         self.dense_layer = dense_layer
 
@@ -20,6 +21,7 @@ class Classifier(object):
             padding = 'VALID',
             strides = 1,
             activation = tf.nn.relu,
+            kernel_regularizer = self.regularizer,
             name = 'conv2d_1',
         )
         prev_layer = self.conv_layer(
@@ -29,6 +31,7 @@ class Classifier(object):
             padding = 'VALID',
             strides = 1,
             activation = tf.nn.relu,
+            kernel_regularizer = self.regularizer,
             name = 'conv2d_2',
         )
         prev_layer = tf.layers.max_pooling2d(
@@ -44,6 +47,7 @@ class Classifier(object):
             padding = 'VALID',
             strides = 1,
             activation = tf.nn.relu,
+            kernel_regularizer = self.regularizer,
             name = 'conv2d_3',
         )
         prev_layer = self.conv_layer(
@@ -53,6 +57,7 @@ class Classifier(object):
             padding = 'VALID',
             strides = 1,
             activation = tf.nn.relu,
+            kernel_regularizer = self.regularizer,
             name = 'conv2d_4',
         )
         prev_layer = tf.layers.max_pooling2d(
@@ -68,18 +73,21 @@ class Classifier(object):
             inputs = prev_layer,
             units = 256,
             activation = tf.nn.relu,
+            kernel_regularizer = self.regularizer,
             name = 'dense_1',
         )
         prev_layer = self.dense_layer(
             inputs = prev_layer,
             units = 256,
             activation = tf.nn.relu,
+            kernel_regularizer = self.regularizer,
             name = 'dense_2',
         )
         self.logits = self.dense_layer(
             inputs = prev_layer,
             units = 10,
             activation = lambda t:t,
+            kernel_regularizer = self.regularizer,
             name = 'dense_3',
         )
 

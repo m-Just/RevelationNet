@@ -33,6 +33,7 @@ def train_classifier():
     max_epoch = 50
     batch_size = 128
     imgsize = 32
+    weight_decay = 1e-6
     num_classes = 10
     data_augmentation = False
 
@@ -46,9 +47,11 @@ def train_classifier():
     x = tf.placeholder(tf.float32, [batch_size, imgsize, imgsize, 3])
     y_= tf.placeholder(tf.float32, [batch_size, num_classes])
 
+    regularizer = tf.contrib.layers.l2_regularizer(scale=weight_decay)
     with tf.variable_scope('conv') as scope:
-        model = Classifier(x, expand_dim=False)
+        model = Classifier(x, regularizer, expand_dim=False)
     loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=model.logits, labels=y_))
+
     eval_acc = accuracy(model.logits, y_)
 
     optimizer = tf.train.MomentumOptimizer(
@@ -61,13 +64,23 @@ def train_classifier():
     sess.run(tf.global_variables_initializer())
     sess.run(iter_train.initializer)
 
+    next_batch = iter_train.get_next()
     for n_epoch in range(max_epoch):
         for i in range(50000 / batch_size):
-            batch = sess.run(iter_train.get_next())
+            batch = sess.run(next_batch)
             _, acc_val, loss_val = sess.run([optim_step, eval_acc, loss],
                 feed_dict={x: batch[0], y_: batch[1]})
-            if i % 10 == 0:
+            if i % 100 == 0:
                 print("Epoch: %d, Step: %d, Acc: %f, Loss: %f" % (n_epoch, i, acc_val, loss_val))
+        acc_avg = loss_avg = 0
+        test_batch_num = len(y_test) / batch_size
+        for i in range(test_batch_num):
+            acc_val, loss_val = sess.run([eval_acc, loss],
+                feed_dict={x: x_test[i*batch_size:(i+1)*batch_size],
+                           y_: y_test[i*batch_size:(i+1)*batch_size]})
+            acc_avg += acc_val
+            loss_avg += loss_val
+        print('Test accuracy: %f, loss: %f' % (acc_avg / test_batch_num, loss_avg / test_batch_num))
 
     saver = tf.train.Saver()
     saver.save(sess, CLASSIFIER_PATH)
