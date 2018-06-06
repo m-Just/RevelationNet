@@ -13,12 +13,26 @@ def accuracy(pred, labels):
     correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(labels, 1))
     return tf.reduce_mean(tf.cast(correct_pred, tf.float32), 0)
 
+def evaluate(sess, adv_imgs, labels, target):
+    print('Start evaluation...')
+    n = len(adv_imgs)
+
+    fidelity = 0.
+    targeted = 0.
+    for img, y in zip(adv_imgs, labels):
+        fidelity += sess.run(accuracy, feed_dict={x: img, y_: [y]})
+        targeted += sess.run(accuracy, feed_dict={x: img, y_: [target]})
+    fidelity /= n
+    targeted /= n
+
+    print('Fidelity on test set: %f' % fidelity)
+    print('Targeted on test set: %f' % targeted)
+
 def train_classifier():
     from cifar10_classifier import Classifier
     from keras.optimizers import SGD
 
     batch_size = 128
-    num_classes = 10
     epochs = 50
     data_augmentation = True
 
@@ -65,15 +79,15 @@ def noise_defense():
     from defense import NoisyClassifier
 
     imgsize = 32
-    cls_num = 10
+    num_classes = 10
     target_label = 0
     eps_val = 0.3
-    test_sample = 100
+    num_samples = 1000
 
     (x_train, y_train), (x_test, y_test) = data_loader.load_original_data()
 
     x = tf.Variable(tf.zeros([imgsize, imgsize, 3]))
-    y_= tf.placeholder(tf.float32, [1, cls_num])
+    y_= tf.placeholder(tf.float32, [1, num_classes])
 
     with tf.variable_scope('conv') as scope:
         model = NoisyClassifier(x)
@@ -95,10 +109,12 @@ def noise_defense():
             adv_img = fgsm_agent.generate(sess, sample_x, target_label, eps_val=eps_val)
             adv_imgs.append(adv_img)
             y_real.append(sample_y)
-        #if i >= test_sample: break 
+        if i >= num_samples: break 
 
-    adv_imgs = np.stack(adv_imgs, axis=0)
-    print(adv_imgs.shape)
+    print('Generated adversarial images %d/%d' % (len(adv_imgs), num_samples))
+    evaluate(sess, adv_imgs, y_real, np.eye(num_classes)[target_label])
+
+    print(len(adv_imgs))
 
 if __name__ == '__main__':
     #train_classifier()
