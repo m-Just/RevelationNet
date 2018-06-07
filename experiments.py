@@ -160,10 +160,11 @@ def attack_classifier(_Classifier, target_label,
     num_classes=10,
     num_samples=100,
     eps_val=0.3,
-    plot_savepath=None):
+    lr_val=1e-1,
+    plot_savepath='visualizations'):
 
     if plot_savepath is not None:
-        plot_savepath = os.path.join(plot_savepath, 'eps%g' % eps_val)
+        plot_savepath = os.path.join(plot_savepath, 'lr%g_eps%g' % (lr_val, eps_val))
         if os.path.isdir(plot_savepath):
             shutil.rmtree(plot_savepath)
         os.makedirs(plot_savepath)
@@ -192,6 +193,7 @@ def attack_classifier(_Classifier, target_label,
     indices = range(len(y_test))
     random.shuffle(indices)
 
+    v = 0
     for i in range(num_samples):
         sample_x = x_test[indices[i]]
         sample_y = y_test[indices[i]]
@@ -199,14 +201,15 @@ def attack_classifier(_Classifier, target_label,
         sess.run(assign_op, feed_dict={x: sample_x})
         acc_val = sess.run(eval_acc, feed_dict={x: sample_x, y_: [sample_y]})
         if acc_val == 1 and np.argmax(sample_y) != target_label:
-            adv_img = fgsm_agent.generate(sess, sample_x, target_label, eps_val=eps_val)
+            adv_img = fgsm_agent.generate(sess, sample_x, target_label, eps_val=eps_val, lr_val=lr_val)
             adv_imgs.append(adv_img[-1])
             y_real.append(sample_y)
 
-            if plot_savepath is not None:
+            if v < 10 and plot_savepath is not None:
                 fig = visualize((10, 10), [sample_x] + adv_img[:99]) 
                 plt.savefig(os.path.join(plot_savepath, '%d.png' % i))
                 plt.close(fig)
+                v += 1
     print('Generated adversarial images %d/%d' % (len(adv_imgs), num_samples))
 
     print('Start evaluation...')
@@ -228,5 +231,5 @@ if __name__ == '__main__':
     #train_keras_classifier()
 
     from classifiers import *
-    attack_classifier(Classifier, target_label=0, plot_savepath='visualizations')
-    #attack_classifier(NoisyClassifier, target_label=0, plot_savepath='visualizations')
+    attack_classifier(Classifier, target_label=0, eps_val=0.02, lr_val=1e-2)
+    #attack_classifier(NoisyClassifier, target_label=0)
