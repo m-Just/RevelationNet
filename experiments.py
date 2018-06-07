@@ -28,6 +28,50 @@ def evaluate(sess, eval_acc, x, y_, adv_imgs, labels, target):
     print('Deceived rate on test set: %f' % (deceived / n))
 
 def train_classifier():
+    from classifiers import Classifier
+    
+    max_epoch = 50
+    batch_size = 128
+    imgsize = 32
+    num_classes = 10
+    data_augmentation = False
+
+    if data_augmentation:
+        pass
+    else:
+        (x_train, y_train), (x_test, y_test) = data_loader.load_original_data()
+    data_train = tf.data.Dataset.from_tensor_slices((x_train, y_train)).shuffle(50000).repeat().batch(128)
+    iter_train = data_train.make_initializable_iterator()
+
+    x = tf.Variable(tf.zeros([batch_size, imgsize, imgsize, 3]))
+    y_= tf.placeholder(tf.float32, [batch_size, num_classes])
+
+    model = Classifier(x, expand_dims=False)
+    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=model.logits, labels=y_)
+    eval_acc = accuracy(models.logits, y_)
+
+    optimizer = tf.train.MomentumOptimizer(
+        learning_rate=0.01,
+        momentum=0.9,
+        use_nesterov=True)
+    optimizer.minimize(loss=loss)
+
+    sess = tf.Session()
+    sess.run(tf.global_variables_initializer())
+    sess.run(iter_train.initializer)
+
+    for n_epoch in range(max_epoch):
+        for i in range(50000 / batch_size):
+            batch = sess.run(iter_train.get_next())
+            acc_val, loss_val = sess.run([eval_acc, loss],
+                feed_dict={x: batch[0], y_: batch[1]})
+            print("Epoch: %d, Step: %d, Acc: %f, Loss: %f" % (n_epoch, i, acc_val, loss_val))
+
+    saver = tf.train.Saver()
+    saver.save(sess, CLASSIFIER_PATH)
+    print('Saved trained model at %s ' % CLASSIFIER_PATH)
+
+def train_keras_classifier():
     from cifar10_classifier import Classifier
     from keras.optimizers import SGD
 
@@ -73,9 +117,12 @@ def train_classifier():
     scores = model.evaluate(x_test, y_test, verbose=1)
     print('Test loss:', scores[0])
 
+def attack():
+    from FGSM import Generator
+
 def noise_defense():
     from FGSM import Generator
-    from defense import NoisyClassifier
+    from classifiers import NoisyClassifier
 
     imgsize = 32
     num_classes = 10
