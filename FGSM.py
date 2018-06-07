@@ -24,10 +24,12 @@ class Generator():
     def generate(self, sess, image, target, eps_val=0.01, lr_val=1e-1, num_steps=100):
         sess.run(self.assign_op, feed_dict={self.x: image})
 
+        adv_imgs = []
         for i in range(num_steps):
             _, loss_val = sess.run([self.optim_step, self.loss], feed_dict={self.lr: lr_val, self.y_adv: target})
             sess.run(self.project_step, feed_dict={self.x: image, self.epsilon: eps_val})
             if (i + 1) % 10 == 0:
                 print('step %d, loss=%g' % (i+1, loss_val))
+            adv_imgs.append(sess.run(self.x_adv))
 
-        return sess.run(self.x_adv)
+        return adv_imgs

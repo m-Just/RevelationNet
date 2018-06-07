@@ -4,11 +4,34 @@ import random
 import tensorflow as tf
 import numpy as np
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+
 import data_loader
 
 SAVE_DIR = os.path.join(os.getcwd(), 'saved_models')
 MODEL_NAME = 'keras_cifar10_trained_model'
 CLASSIFIER_PATH = os.path.join(SAVE_DIR, MODEL_NAME)
+
+def visualize(gridsize, imgs):
+
+    fig = plt.figure(figsize=gridsize[::-1])
+    gs = gridspec.GridSpec(*gridsize)
+    gs.update(wspace=0.05, hspace=0.05)
+
+    assert len(imgs) == gridsize[0] * gridsize[1]
+    for i, img in enumerate(imgs):
+        ax = plt.subplot(gs[i])
+        plt.axis('off')
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.set_aspect('equal')
+        plt.imshow(img)
+
+    return fig
+
 
 def accuracy(pred, labels):
     correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(labels, 1))
@@ -33,7 +56,7 @@ def train_classifier():
     max_epoch = 50
     batch_size = 128
     imgsize = 32
-    weight_decay = 1e-6
+    weight_decay = 0 # disabled
     num_classes = 10
     data_augmentation = False
 
@@ -41,7 +64,8 @@ def train_classifier():
         pass
     else:
         (x_train, y_train), (x_test, y_test) = data_loader.load_original_data()
-    data_train = tf.data.Dataset.from_tensor_slices((x_train, y_train)).shuffle(50000).repeat().batch(128)
+    data_train = tf.data.Dataset.from_tensor_slices((x_train, y_train))
+    data_trian = data_train.shuffle(50000).repeat().batch(128)
     iter_train = data_train.make_initializable_iterator()
 
     x = tf.placeholder(tf.float32, [batch_size, imgsize, imgsize, 3])
@@ -50,7 +74,9 @@ def train_classifier():
     regularizer = tf.contrib.layers.l2_regularizer(scale=weight_decay)
     with tf.variable_scope('conv') as scope:
         model = Classifier(x, regularizer, expand_dim=False)
-    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=model.logits, labels=y_)) + tf.losses.get_regularization_loss()
+    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=model.logits, labels=y_))
+    reg_loss = tf.losses.get_regularization_loss()
+    loss += reg_loss
 
     eval_acc = accuracy(model.logits, y_)
 
@@ -74,6 +100,8 @@ def train_classifier():
                 print("Epoch: %d, Step: %d, Acc: %f, Loss: %f" % (n_epoch, i, acc_val, loss_val))
         acc_avg = loss_avg = 0
         test_batch_num = len(y_test) / batch_size
+
+        # validate on test set
         for i in range(test_batch_num):
             acc_val, loss_val = sess.run([eval_acc, loss],
                 feed_dict={x: x_test[i*batch_size:(i+1)*batch_size],
@@ -103,6 +131,7 @@ def train_keras_classifier():
             optimizer=opt,
             metrics=['accuracy'])
 
+    # load data and start training
     if data_augmentation:
         print('Using real-time data augmentation.')
         datagen, (x_train, y_train), (x_test, y_test) = data_loader.load_augmented_data()
@@ -120,20 +149,20 @@ def train_keras_classifier():
             validation_data=(x_test, y_test),
             shuffle=True)
 
+    # save as tensorflow model
     if not os.path.isdir(SAVE_DIR):
         os.makedirs(SAVE_DIR)
-    #model.save(CLASSIFIER_PATH)
+    model.save(CLASSIFIER_PATH)
+
     from keras.backend import get_session
     sess = get_session()
     saver = tf.train.Saver()
     saver.save(sess, CLASSIFIER_PATH)
     print('Saved trained model at %s ' % CLASSIFIER_PATH)
 
+    # evaluate on test set
     scores = model.evaluate(x_test, y_test, verbose=1)
     print('Test loss:', scores[0])
-
-def attack():
-    from FGSM import Generator
 
 def noise_defense():
     from FGSM import Generator
@@ -174,8 +203,12 @@ def noise_defense():
         acc_val = sess.run(eval_acc, feed_dict={x: sample_x, y_: [sample_y]})
         if acc_val == 1 and np.argmax(sample_y) != target_label:
             adv_img = fgsm_agent.generate(sess, sample_x, target_label, eps_val=eps_val)
-            adv_imgs.append(adv_img)
+            adv_imgs.append(adv_img[-1])
             y_real.append(sample_y)
+
+            fig = visualize((10, 10), [sample_x] + adv_img[:99]) 
+            plt.savefig('visualizations/%d.png' % i)
+            plt.close(fig)
 
     print('Generated adversarial images %d/%d' % (len(adv_imgs), num_samples))
     y_target = np.eye(num_classes)[target_label]
@@ -184,5 +217,5 @@ def noise_defense():
     print(len(adv_imgs))
 
 if __name__ == '__main__':
-    train_classifier()
-    #noise_defense()
+    #train_classifier()
+    noise_defense()
