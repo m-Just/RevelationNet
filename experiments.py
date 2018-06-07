@@ -1,4 +1,5 @@
 import os
+import shutil
 import random
 
 import tensorflow as tf
@@ -34,8 +35,6 @@ def visualize(gridsize, imgs):
 def accuracy(pred, labels):
     correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(labels, 1))
     return tf.reduce_mean(tf.cast(correct_pred, tf.float32), 0)
-
-def evaluate(sess, assign_op, eval_acc, x, y_, adv_imgs, labels, target):
 
 def train_classifier():
     from classifiers import Classifier
@@ -161,9 +160,13 @@ def attack_classifier(_Classifier, target_label,
     num_classes=10,
     num_samples=100,
     eps_val=0.3,
-    visualize_results=True):
+    plot_savepath=None):
 
-    from FGSM import Generator
+    if plot_savepath is not None:
+        plot_savepath = os.path.join(plot_savepath, 'eps%g' % eps_val)
+        if os.path.isdir(plot_savepath):
+            shutil.rmtree(plot_savepath)
+        os.makedirs(plot_savepath)
 
     x = tf.placeholder(tf.float32, [imgsize, imgsize, 3])
     x_adv = tf.Variable(tf.zeros([imgsize, imgsize, 3]))
@@ -174,6 +177,7 @@ def attack_classifier(_Classifier, target_label,
         model = _Classifier(x_adv)
     eval_acc = accuracy(model.logits, y_)
 
+    from FGSM import Generator
     fgsm_agent = Generator(imgsize, x_adv, model.logits)
 
     sess = tf.Session()
@@ -199,23 +203,22 @@ def attack_classifier(_Classifier, target_label,
             adv_imgs.append(adv_img[-1])
             y_real.append(sample_y)
 
-            if visualize_results:
+            if plot_savepath is not None:
                 fig = visualize((10, 10), [sample_x] + adv_img[:99]) 
-                plt.savefig('visualizations/%d.png' % i)
+                plt.savefig(os.path.join(plot_savepath, '%d.png' % i))
                 plt.close(fig)
-
     print('Generated adversarial images %d/%d' % (len(adv_imgs), num_samples))
-    y_target = np.eye(num_classes)[target_label]
 
     print('Start evaluation...')
     n = len(adv_imgs)
+    y_target = np.eye(num_classes)[target_label]
 
     fidelity = 0.
     deceived = 0.
-    for img, y in zip(adv_imgs, labels):
+    for img, y in zip(adv_imgs, y_real):
         sess.run(assign_op, feed_dict={x: img})
         fidelity += sess.run(eval_acc, feed_dict={x: img, y_: [y]})
-        deceived += sess.run(eval_acc, feed_dict={x: img, y_: [target]})
+        deceived += sess.run(eval_acc, feed_dict={x: img, y_: [y_target]})
 
     print('Fidelity rate on test set: %f' % (fidelity / n))
     print('Deceived rate on test set: %f' % (deceived / n))
@@ -225,5 +228,5 @@ if __name__ == '__main__':
     #train_keras_classifier()
 
     from classifiers import *
-    attack_classifier(Classifier, target_label=0)
-    #attack_classifier(NoisyClassifier, target_label=0)
+    attack_classifier(Classifier, target_label=0, plot_savepath='visualizations')
+    #attack_classifier(NoisyClassifier, target_label=0, plot_savepath='visualizations')
