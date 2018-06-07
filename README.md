@@ -5,7 +5,7 @@
 
 ## Notes
 - noise on convolutional kernel and negative noise greatly reduce classification accuracy.
-- epsilon=0.02 and lr=0.003~0.01 is a suitable setting for FGSM attack on CIFAR-10 (94% rate of success).
+- epsilon=0.02 and lr=0.003~0.01 is a suitable setting for FGSM attack on CIFAR-10 (96% rate of success).
 
 ## Contents
 - `notebooks`: ipython notebook files.
