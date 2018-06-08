@@ -177,6 +177,7 @@ def attack_classifier(_Classifier, target_label,
     with tf.variable_scope('conv') as scope:
         model = _Classifier(x_adv)
     eval_acc = accuracy(model.logits, y_)
+    eval_dev = tf.reduce_mean((x_adv - x) ** 2)
 
     from FGSM import Generator
     fgsm_agent = Generator(imgsize, x_adv, model.logits)
@@ -193,7 +194,10 @@ def attack_classifier(_Classifier, target_label,
     indices = range(len(y_test))
     random.shuffle(indices)
 
-    v = 0
+    p = 0
+    deviance = 0.
+    fidelity = 0.
+    deceived = 0.
     for i in range(num_samples):
         sample_x = x_test[indices[i]]
         sample_y = y_test[indices[i]]
@@ -205,24 +209,21 @@ def attack_classifier(_Classifier, target_label,
             adv_imgs.append(adv_img[-1])
             y_real.append(sample_y)
 
-            if v < 10 and plot_savepath is not None:
+            if p < 10 and plot_savepath is not None:
                 fig = visualize((10, 10), [sample_x] + adv_img[:99]) 
                 plt.savefig(os.path.join(plot_savepath, '%d.png' % i))
                 plt.close(fig)
-                v += 1
+                p += 1
+
+            y_target = np.eye(num_classes)[target_label]
+            deviance += sess.run(eval_dev, feed_dict={x: sample_x})
+            fidelity += sess.run(eval_acc, feed_dict={y_: [sample_y]})
+            deceived += sess.run(eval_acc, feed_dict={y_: [y_target]})
+
     print('Generated adversarial images %d/%d' % (len(adv_imgs), num_samples))
 
-    print('Start evaluation...')
     n = len(adv_imgs)
-    y_target = np.eye(num_classes)[target_label]
-
-    fidelity = 0.
-    deceived = 0.
-    for img, y in zip(adv_imgs, y_real):
-        sess.run(assign_op, feed_dict={x: img})
-        fidelity += sess.run(eval_acc, feed_dict={x: img, y_: [y]})
-        deceived += sess.run(eval_acc, feed_dict={x: img, y_: [y_target]})
-
+    print('Deviance rate on test set: %f' % (deviance / n))
     print('Fidelity rate on test set: %f' % (fidelity / n))
     print('Deceived rate on test set: %f' % (deceived / n))
 
