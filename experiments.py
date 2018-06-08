@@ -15,6 +15,9 @@ SAVE_DIR = os.path.join(os.getcwd(), 'saved_models')
 MODEL_NAME = 'keras_cifar10_trained_model'
 CLASSIFIER_PATH = os.path.join(SAVE_DIR, MODEL_NAME)
 
+# pretrained clean cifar10 classifier
+PRETRAINED_PATH = 'saved_models/clean_model'
+
 def visualize(gridsize, imgs):
 
     fig = plt.figure(figsize=gridsize[::-1])
@@ -174,7 +177,8 @@ def noise_defense():
     eps_val = 0.3
     num_samples = 200
 
-    x = tf.Variable(tf.zeros([imgsize, imgsize, 3]))
+    x = tf.placeholder(tf.float32, [imgsize, imgsize, 3])
+    x_adv = tf.Variable(tf.zeros([imgsize, imgsize, 3]))
     y_= tf.placeholder(tf.float32, [1, num_classes])
 
     with tf.variable_scope('conv') as scope:
@@ -182,7 +186,7 @@ def noise_defense():
     pred = tf.nn.softmax(model.logits)
     eval_acc = accuracy(pred, y_)
 
-    fgsm_agent = Generator(imgsize, x, model.logits)
+    fgsm_agent = Generator(imgsize, x_adv, model.logits)
 
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
@@ -217,5 +221,5 @@ def noise_defense():
     print(len(adv_imgs))
 
 if __name__ == '__main__':
-    #train_keras_classifier()
+    #train_classifier()
     noise_defense()
