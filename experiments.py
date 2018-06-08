@@ -161,6 +161,9 @@ def attack_classifier(_Classifier, target_label,
     num_samples=100,
     eps_val=0.3,
     lr_val=1e-1,
+    perturb_input=False,
+    p_min=-0.5,
+    p_max=0.5,
     plot_savepath='visualizations'):
 
     if plot_savepath is not None:
@@ -170,6 +173,8 @@ def attack_classifier(_Classifier, target_label,
         os.makedirs(plot_savepath)
 
     x = tf.placeholder(tf.float32, [imgsize, imgsize, 3])
+    if perturb_input:
+        x = x + tf.random_uniform(shape=x.get_shape(), minval=p_min, maxval=p_max)
     x_adv = tf.Variable(tf.zeros([imgsize, imgsize, 3]))
     y_= tf.placeholder(tf.float32, [1, num_classes])
 
@@ -216,11 +221,11 @@ def attack_classifier(_Classifier, target_label,
                 plt.close(fig)
                 p += 1
 
-            y_target = np.eye(num_classes)[target_label]
+            target_y = np.eye(num_classes)[target_label]
             l2_diff += sess.run(eval_l2_diff, feed_dict={x: sample_x})
             li_diff += sess.run(eval_li_diff, feed_dict={x: sample_x})
             fidelity += sess.run(eval_acc, feed_dict={y_: [sample_y]})
-            deceived += sess.run(eval_acc, feed_dict={y_: [y_target]})
+            deceived += sess.run(eval_acc, feed_dict={y_: [target_y]})
 
     print('Generated adversarial images %d/%d' % (len(adv_imgs), num_samples))
 
