@@ -177,7 +177,8 @@ def attack_classifier(_Classifier, target_label,
     with tf.variable_scope('conv') as scope:
         model = _Classifier(x_adv)
     eval_acc = accuracy(model.logits, y_)
-    eval_dev = tf.reduce_mean((x_adv - x) ** 2)
+    eval_l2_diff = tf.norm(x_adv - x, ord=2)
+    eval_li_diff = tf.norm(x_adv - x, ord=np.inf)
 
     from FGSM import Generator
     fgsm_agent = Generator(imgsize, x_adv, model.logits)
@@ -195,7 +196,7 @@ def attack_classifier(_Classifier, target_label,
     random.shuffle(indices)
 
     p = 0
-    deviance = 0.
+    l2_diff = li_diff = 0.
     fidelity = 0.
     deceived = 0.
     for i in range(num_samples):
@@ -216,14 +217,16 @@ def attack_classifier(_Classifier, target_label,
                 p += 1
 
             y_target = np.eye(num_classes)[target_label]
-            deviance += sess.run(eval_dev, feed_dict={x: sample_x})
+            l2_diff += sess.run(eval_l2_diff, feed_dict={x: sample_x})
+            li_diff += sess.run(eval_li_diff, feed_dict={x: sample_x})
             fidelity += sess.run(eval_acc, feed_dict={y_: [sample_y]})
             deceived += sess.run(eval_acc, feed_dict={y_: [y_target]})
 
     print('Generated adversarial images %d/%d' % (len(adv_imgs), num_samples))
 
     n = len(adv_imgs)
-    print('Deviance rate on test set: %f' % (deviance / n))
+    print('L2 difference on test set: %f' % (l2_diff / n))
+    print('LI difference on test set: %f' % (li_diff / n))
     print('Fidelity rate on test set: %f' % (fidelity / n))
     print('Deceived rate on test set: %f' % (deceived / n))
 
