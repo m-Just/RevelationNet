@@ -40,15 +40,17 @@ def accuracy(pred, labels):
     correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(labels, 1))
     return tf.reduce_mean(tf.cast(correct_pred, tf.float32), 0)
 
-def evaluate(sess, eval_acc, x, y_, adv_imgs, labels, target):
+def evaluate(sess, eval_ops, x, y_, adv_imgs, labels, target):
     print('Start evaluation...')
     n = len(adv_imgs)
 
     fidelity = 0.
     deceived = 0.
     for img, y in zip(adv_imgs, labels):
-        fidelity += sess.run(eval_acc, feed_dict={x: img, y_: [y]})
-        deceived += sess.run(eval_acc, feed_dict={x: img, y_: [target]})
+        _, f = sess.run(eval_ops, feed_dict={x: img, y_: [y]})
+        _, d = sess.run(eval_ops, feed_dict={x: img, y_: [target]})
+        fidelity += f
+        deceived += d
 
     print('Fidelity rate on test set: %f' % (fidelity / n))
     print('Deceived rate on test set: %f' % (deceived / n))
@@ -181,8 +183,10 @@ def noise_defense():
     x_adv = tf.Variable(tf.zeros([imgsize, imgsize, 3]))
     y_= tf.placeholder(tf.float32, [1, num_classes])
 
+    assign_op = tf.assign(x_adv, x)
+
     with tf.variable_scope('conv') as scope:
-        model = NoisyClassifier(x)
+        model = NoisyClassifier(x_adv)
     pred = tf.nn.softmax(model.logits)
     eval_acc = accuracy(pred, y_)
 
@@ -204,7 +208,7 @@ def noise_defense():
         sample_x = x_test[indices[i]]
         sample_y = y_test[indices[i]]
         
-        acc_val = sess.run(eval_acc, feed_dict={x: sample_x, y_: [sample_y]})
+        acc_val = sess.run([assign_op, eval_acc], feed_dict={x: sample_x, y_: [sample_y]})
         if acc_val == 1 and np.argmax(sample_y) != target_label:
             adv_img = fgsm_agent.generate(sess, sample_x, target_label, eps_val=eps_val)
             adv_imgs.append(adv_img[-1])
@@ -216,7 +220,7 @@ def noise_defense():
 
     print('Generated adversarial images %d/%d' % (len(adv_imgs), num_samples))
     y_target = np.eye(num_classes)[target_label]
-    evaluate(sess, eval_acc, x, y_, adv_imgs, y_real, y_target)
+    evaluate(sess, [assign_op, eval_acc], x, y_, adv_imgs, y_real, y_target)
 
     print(len(adv_imgs))
 
