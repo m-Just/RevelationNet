@@ -12,14 +12,10 @@ import matplotlib.gridspec as gridspec
 import data_loader
 
 SAVE_DIR = os.path.join(os.getcwd(), 'saved_models')
-MODEL_NAME = 'keras_cifar10_trained_model'
-CLASSIFIER_PATH = os.path.join(SAVE_DIR, MODEL_NAME)
-
-# pretrained clean cifar10 classifier
-PRETRAINED_PATH = 'saved_models/clean_model'
+CLASSIFIER_PATH = os.path.join(SAVE_DIR, 'new_model')
+PRETRAINED_PATH = os.path.join(SAVE_DIR, 'pretrained_model')
 
 def visualize(gridsize, imgs):
-
     fig = plt.figure(figsize=gridsize[::-1])
     gs = gridspec.GridSpec(*gridsize)
     gs.update(wspace=0.05, hspace=0.05)
@@ -35,25 +31,11 @@ def visualize(gridsize, imgs):
 
     return fig
 
-
 def accuracy(pred, labels):
     correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(labels, 1))
     return tf.reduce_mean(tf.cast(correct_pred, tf.float32), 0)
 
-def evaluate(sess, eval_ops, x, y_, adv_imgs, labels, target):
-    print('Start evaluation...')
-    n = len(adv_imgs)
-
-    fidelity = 0.
-    deceived = 0.
-    for img, y in zip(adv_imgs, labels):
-        _, f = sess.run(eval_ops, feed_dict={x: img, y_: [y]})
-        _, d = sess.run(eval_ops, feed_dict={x: img, y_: [target]})
-        fidelity += f
-        deceived += d
-
-    print('Fidelity rate on test set: %f' % (fidelity / n))
-    print('Deceived rate on test set: %f' % (deceived / n))
+def evaluate(sess, assign_op, eval_acc, x, y_, adv_imgs, labels, target):
 
 def train_classifier():
     from classifiers import Classifier
@@ -64,6 +46,11 @@ def train_classifier():
     weight_decay = 0 # disabled
     num_classes = 10
     data_augmentation = False
+
+    print('WARNING: data augmentation not implemented. ' + \
+        'For better model performance, please use train_keras_classifier instead')
+    response = raw_input('Do you wish to continue? (y/N)')
+    if response.lower() not in ['y', 'yes']: return
 
     if data_augmentation:
         pass
@@ -162,68 +149,81 @@ def train_keras_classifier():
     from keras.backend import get_session
     sess = get_session()
     saver = tf.train.Saver()
-    saver.save(sess, CLASSIFIER_PATH)
-    print('Saved trained model at %s ' % CLASSIFIER_PATH)
+    saver.save(sess, PRETRAINED_PATH)
+    print('Saved trained model at %s ' % PRETRAINED_PATH)
 
     # evaluate on test set
     scores = model.evaluate(x_test, y_test, verbose=1)
     print('Test loss:', scores[0])
 
-def noise_defense():
-    from FGSM import Generator
-    from classifiers import NoisyClassifier
+def attack_classifier(_Classifier, target_label,
+    imgsize=32,
+    num_classes=10,
+    num_samples=100,
+    eps_val=0.3,
+    visualize_results=True):
 
-    imgsize = 32
-    num_classes = 10
-    target_label = 0
-    eps_val = 0.3
-    num_samples = 200
+    from FGSM import Generator
 
     x = tf.placeholder(tf.float32, [imgsize, imgsize, 3])
     x_adv = tf.Variable(tf.zeros([imgsize, imgsize, 3]))
     y_= tf.placeholder(tf.float32, [1, num_classes])
 
     assign_op = tf.assign(x_adv, x)
-
     with tf.variable_scope('conv') as scope:
-        model = NoisyClassifier(x_adv)
-    pred = tf.nn.softmax(model.logits)
-    eval_acc = accuracy(pred, y_)
+        model = _Classifier(x_adv)
+    eval_acc = accuracy(model.logits, y_)
 
     fgsm_agent = Generator(imgsize, x_adv, model.logits)
 
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
-
     saver = tf.train.Saver(var_list=tf.trainable_variables('conv'))
-    saver.restore(sess, CLASSIFIER_PATH)
+    saver.restore(sess, PRETRAINED_PATH)
 
     adv_imgs = []
     y_real = []
     (x_train, y_train), (x_test, y_test) = data_loader.load_original_data()
-    
+
     indices = range(len(y_test))
     random.shuffle(indices)
+
     for i in range(num_samples):
         sample_x = x_test[indices[i]]
         sample_y = y_test[indices[i]]
         
-        acc_val = sess.run([assign_op, eval_acc], feed_dict={x: sample_x, y_: [sample_y]})
+        sess.run(assign_op, feed_dict={x: sample_x})
+        acc_val = sess.run(eval_acc, feed_dict={x: sample_x, y_: [sample_y]})
         if acc_val == 1 and np.argmax(sample_y) != target_label:
             adv_img = fgsm_agent.generate(sess, sample_x, target_label, eps_val=eps_val)
             adv_imgs.append(adv_img[-1])
             y_real.append(sample_y)
 
-            fig = visualize((10, 10), [sample_x] + adv_img[:99]) 
-            plt.savefig('visualizations/%d.png' % i)
-            plt.close(fig)
+            if visualize_results:
+                fig = visualize((10, 10), [sample_x] + adv_img[:99]) 
+                plt.savefig('visualizations/%d.png' % i)
+                plt.close(fig)
 
     print('Generated adversarial images %d/%d' % (len(adv_imgs), num_samples))
     y_target = np.eye(num_classes)[target_label]
-    evaluate(sess, [assign_op, eval_acc], x, y_, adv_imgs, y_real, y_target)
 
-    print(len(adv_imgs))
+    print('Start evaluation...')
+    n = len(adv_imgs)
+
+    fidelity = 0.
+    deceived = 0.
+    for img, y in zip(adv_imgs, labels):
+        sess.run(assign_op, feed_dict={x: img})
+        fidelity += sess.run(eval_acc, feed_dict={x: img, y_: [y]})
+        deceived += sess.run(eval_acc, feed_dict={x: img, y_: [target]})
+
+    print('Fidelity rate on test set: %f' % (fidelity / n))
+    print('Deceived rate on test set: %f' % (deceived / n))
 
 if __name__ == '__main__':
     #train_classifier()
-    noise_defense()
+    #train_keras_classifier()
+
+    from classifiers import *
+    attack_classifier(Classifier, target_label=0)
+    #attack_classifier(NoisyClassifier, target_label=0)
