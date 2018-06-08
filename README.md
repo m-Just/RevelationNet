@@ -4,6 +4,7 @@
 1. Generate adversarial images via Zeroth Order Optimization. 
 
 ## Notes
+- random multiplier on gradient would cause FGSM attack with fixed learning rate to fail to converge.
 - noise on convolutional kernel and negative noise greatly reduce classification accuracy.
 - epsilon=0.02 and lr=0.003~0.01 is a suitable setting for FGSM attack on CIFAR-10 (96% rate of success).
 

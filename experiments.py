@@ -162,25 +162,26 @@ def attack_classifier(_Classifier, target_label,
     eps_val=0.3,
     lr_val=1e-1,
     perturb_input=False,
-    p_min=-0.5,
-    p_max=0.5,
+    perturb_scale=0.1,
     plot_savepath='visualizations'):
 
     if plot_savepath is not None:
         plot_savepath = os.path.join(plot_savepath, 'lr%g_eps%g' % (lr_val, eps_val))
+        if perturb_input: plot_savepath += '_perturbed%g' % perturb_scale
         if os.path.isdir(plot_savepath):
             shutil.rmtree(plot_savepath)
         os.makedirs(plot_savepath)
 
     x = tf.placeholder(tf.float32, [imgsize, imgsize, 3])
-    if perturb_input:
-        x = x + tf.random_uniform(shape=x.get_shape(), minval=p_min, maxval=p_max)
     x_adv = tf.Variable(tf.zeros([imgsize, imgsize, 3]))
     y_= tf.placeholder(tf.float32, [1, num_classes])
 
     assign_op = tf.assign(x_adv, x)
     with tf.variable_scope('conv') as scope:
-        model = _Classifier(x_adv)
+        if perturb_input:
+            model = _Classifier(x_adv, -perturb_scale, perturb_scale)
+        else:
+            model = _Classifier(x_adv)
     eval_acc = accuracy(model.logits, y_)
     eval_l2_diff = tf.norm(x_adv - x, ord=2)
     eval_li_diff = tf.norm(x_adv - x, ord=np.inf)
@@ -201,15 +202,17 @@ def attack_classifier(_Classifier, target_label,
     random.shuffle(indices)
 
     p = 0
+    correct = 0
     l2_diff = li_diff = 0.
     fidelity = 0.
     deceived = 0.
     for i in range(num_samples):
         sample_x = x_test[indices[i]]
         sample_y = y_test[indices[i]]
-        
+
         sess.run(assign_op, feed_dict={x: sample_x})
         acc_val = sess.run(eval_acc, feed_dict={x: sample_x, y_: [sample_y]})
+        correct += acc_val
         if acc_val == 1 and np.argmax(sample_y) != target_label:
             adv_img = fgsm_agent.generate(sess, sample_x, target_label, eps_val=eps_val, lr_val=lr_val)
             adv_imgs.append(adv_img[-1])
@@ -227,6 +230,7 @@ def attack_classifier(_Classifier, target_label,
             fidelity += sess.run(eval_acc, feed_dict={y_: [sample_y]})
             deceived += sess.run(eval_acc, feed_dict={y_: [target_y]})
 
+    print('Classification accuracy: %f' % (correct / num_samples))
     print('Generated adversarial images %d/%d' % (len(adv_imgs), num_samples))
 
     n = len(adv_imgs)
@@ -240,5 +244,6 @@ if __name__ == '__main__':
     #train_keras_classifier()
 
     from classifiers import *
-    attack_classifier(Classifier, target_label=0, eps_val=0.02, lr_val=1e-2)
+    #attack_classifier(Classifier, target_label=0, eps_val=0.02, lr_val=3e-3)
+    attack_classifier(InputPerturbedClassifier, target_label=0, eps_val=0.02, lr_val=3e-3, perturb_input=True, perturb_scale=0.1)
     #attack_classifier(NoisyClassifier, target_label=0)
