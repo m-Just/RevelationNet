@@ -2,7 +2,10 @@
 
 ## TODO
 1. Generate adversarial images via Zeroth Order Optimization. 
-2. Find a suitable epsilon value for FGSM attack.
+
+## Notes
+- noise on convolutional kernel and negative noise greatly reduce classification accuracy.
+- epsilon=0.02 and lr=0.003~0.01 is a suitable setting for FGSM attack on CIFAR-10 (96% rate of success).
 
 ## Contents
 - `notebooks`: ipython notebook files.
