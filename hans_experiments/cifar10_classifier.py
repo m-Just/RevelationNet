@@ -167,18 +167,20 @@ class Flatten(Layer):
 
 class MaxPool(Layer):
     
-    def __init__(self, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1]):
+    def __init__(self, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1],
+                 padding="VALID"):
         self.ksize = ksize
         self.strides = strides
+        self.padding = padding
 
     def set_input_shape(self, shape):
         self.input_shape = shape
-        output_height = shape[1] / self.ksize[1]
-        output_width = shape[2] / self.ksize[2]
+        output_height = shape[1] // self.ksize[1]
+        output_width = shape[2] // self.ksize[2]
         self.output_shape = [shape[0], output_height, output_width, shape[3]]
 
     def fprop(self, x):
-        return tf.nn.max_pool(x, self.ksize, self.strides)
+        return tf.nn.max_pool(x, self.ksize, self.strides, self.padding)
 
     def get_params(self):
         return []
