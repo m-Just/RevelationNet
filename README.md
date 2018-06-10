@@ -2,7 +2,7 @@
 
 ## TODO
 1. Generate adversarial images via Zeroth Order Optimization. 
-2. The cleverhans version classifier only has about 78% accuracy, need to add learning rate decay to further increase performance.
+2. Add learning rate decay during training.
 3. Re-implement FGSM attack with cleverhans.
 
 ## Notes
