@@ -54,7 +54,7 @@ class Classifier(object):
             inputs = prev_layer,
             filters = 128,
             kernel_size = 3,
-            (padding = 'VALID',
+            padding = 'VALID',
             strides = 1,
             activation = tf.nn.relu,
             kernel_regularizer = self.regularizer,
@@ -185,3 +185,12 @@ class NoisyClassifier(Classifier):
                     bias_noise = tf.random_uniform(shape=bias_shape, minval=self.noise_minval, maxval=self.noise_maxval)
 
         return activation(tf.nn.bias_add(tf.matmul(inputs, kernel), bias))
+
+class InputPerturbedClassifier(Classifier):
+    def __init__(self, x, minval, maxval):
+        self.regularizer = None
+        self.conv_layer = tf.layers.conv2d
+        self.dense_layer = tf.layers.dense
+        x = tf.expand_dims(x, 0)
+        perturbed_x = x + tf.random_uniform(shape=x.get_shape(), minval=minval, maxval=maxval)
+        super(InputPerturbedClassifier, self).build_graph(perturbed_x)
