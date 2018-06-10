@@ -198,7 +198,7 @@ class ResnetLayer(Layer):
                  kernel_size=(3, 3),
                  strides=(1, 1),
                  activation=ReLU(),
-                 batch_normalization=True)
+                 batch_normalization=True):
         self.__dict__.update(locals())
         del self.self
 
@@ -225,7 +225,7 @@ class ResnetLayer(Layer):
         return x
 
     def get_params(self):
-        return [self.conv.kernels, self.conv,b]
+        return [self.conv.kernels, self.conv.b]
 
 class ResnetBlock(Layer):
     def __init__(self, num_filters, first_layer_not_first_stack=True):
@@ -249,7 +249,7 @@ class ResnetBlock(Layer):
                                   activation=None,
                                   batch_normalization=False)
             self.x2_1.set_input_shape(shape)
-        self.x2_1.output_shape = self.x1_2.get_output_shape()
+        self.output_shape = self.x1_2.get_output_shape()
 
     def fprop(self, x):
         x1 = self.x1_1.fprop(x)
@@ -299,7 +299,7 @@ def make_resnet(depth=32, num_classes=10, input_shape=(None, 32, 32, 3)):
     layers = [ResnetLayer()]
     for stack in range(3):
         for res_block in range(num_res_blocks):
-            layers.append(ResnetBlock(num_filters=num_filters,
+            layers.append(ResnetBlock(num_filters,
                                       stack > 0 and res_block == 0))
         num_filters *= 2
     layers.extend([Pooling('avg'),

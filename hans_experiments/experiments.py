@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import os
 import logging
 
 import numpy as np
@@ -11,7 +12,7 @@ import tensorflow as tf
 from cleverhans.utils_tf import model_train, model_eval
 from cleverhans.utils import AccuracyReport, set_log_level
 
-from cifar10_classifier import make_classifier
+from cifar10_classifier import make_simple_cnn, make_resnet
 
 
 def data_cifar10(train_start, train_end, test_start, test_end):
@@ -55,7 +56,7 @@ def data_cifar10(train_start, train_end, test_start, test_end):
 
     return datagen, (x_train, y_train), (x_test, y_test)
 
-def train_classifier():
+def train_classifier(model_name, nb_epochs):
     tf.set_random_seed(1822)
     report = AccuracyReport()
     set_log_level(logging.DEBUG)
@@ -76,14 +77,23 @@ def train_classifier():
     y = tf.placeholder(tf.float32, shape=(None, 10))
     
     # Initialize model
-    model = make_classifier()
+    if model_name == 'simple':
+        model = make_simple_cnn()
+        learning_rate = 0.003
+    elif model_name == 'resnet':
+        model = make_resnet(depth=32)
+        learning_rate = 0.001
+    else:
+        raise ValueError()
+    #for layer in model.layers:
+    #    print(layer.name)
     preds = model.get_probs(x)
 
     batch_size = 128
     train_params = {
-        'nb_epochs': 50,
+        'nb_epochs': nb_epochs,
         'batch_size': batch_size,
-        'learning_rate': 0.003 
+        'learning_rate': learning_rate,
     }
     rng = np.random.RandomState([2018, 6, 9])
 
@@ -101,10 +111,17 @@ def train_classifier():
                 evaluate=evaluate, args=train_params, rng=rng,
                 var_list=model.get_params())
 
+    savedir = './tfmodels'
+    if not os.path.isdir(savedir):
+        os.makedirs(savedir)
+    saver = tf.train.Saver(var_list=tf.trainable_variables())
+    model_savename = 'cifar10_%s_model_epoch%d' % (model_name, nb_epochs)
+    saver.save(sess, os.path.join(savedir, model_savename))
+
     return report
 
 def main(argv=None):
-    train_classifier()
+    train_classifier(model_name='resnet', nb_epochs=50)
 
 if __name__ == '__main__':
     tf.app.run()
