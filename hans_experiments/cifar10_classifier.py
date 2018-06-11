@@ -87,6 +87,7 @@ class Conv2D(Layer):
         del self.self
 
     def set_input_shape(self, input_shape):
+        self.input_shape = input_shape
         batch_size, rows, cols, input_channels = input_shape
         kernel_shape = tuple(self.kernel_shape) + (input_channels,
                                                    self.output_channels)
@@ -165,10 +166,16 @@ class Flatten(Layer):
     def get_params(self):
         return []
 
-class MaxPool(Layer):
+class Pooling(Layer):
     
-    def __init__(self, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1],
+    def __init__(self, pool_type='max', ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1],
                  padding="VALID"):
+        if pool_type.lower() == 'max':
+            self.pooling = tf.nn.max_pool
+        elif pool_type.lower() in ['avg', 'average']:
+            self.pooling = tf.nn.avg_pool
+        else:
+            raise NotImplementedError('only max and average pooling are supported')
         self.ksize = ksize
         self.strides = strides
         self.padding = padding
@@ -180,32 +187,125 @@ class MaxPool(Layer):
         self.output_shape = [shape[0], output_height, output_width, shape[3]]
 
     def fprop(self, x):
-        return tf.nn.max_pool(x, self.ksize, self.strides, self.padding)
+        return self.pooling(x, self.ksize, self.strides, self.padding)
 
     def get_params(self):
         return []
 
-def make_classifier(nb_filters=64, nb_classes=10,
-                   input_shape=(None, 32, 32, 3)):
-    layers = [Conv2D(nb_filters, (3, 3), (1, 1), "VALID"),
-              ReLU(),
-              Conv2D(nb_filters, (3, 3), (1, 1), "VALID"),
-              ReLU(),
-              MaxPool(),
+class ResnetLayer(Layer):
+    def __init__(self,
+                 num_filters=16,
+                 kernel_size=(3, 3),
+                 strides=(1, 1),
+                 activation=ReLU(),
+                 batch_normalization=True)
+        self.__dict__.update(locals())
+        del self.self
 
-              Conv2D(nb_filters * 2, (3, 3), (1, 1), "VALID"),
+
+    def set_input_shape(self, shape):
+        self.input_shape = shape
+        self.conv = Conv2D(self.num_filters,
+                           self.kernel_size,
+                           self.strides,
+                           "SAME")
+        self.conv.set_input_shape(shape)
+        if self.activation is not None:
+            self.activation.set_input_shape(self.conv.get_output_shape())
+            self.output_shape = self.activation.get_output_shape()
+        else:
+            self.output_shape = self.conv.get_output_shape()
+
+    def fprop(self, x):
+        x = self.conv.fprop(x)
+        if self.batch_normalization:
+            x = tf.layers.batch_normalization(x)
+        if self.activation is not None:
+            x = self.activation.fprop(x)
+        return x
+
+    def get_params(self):
+        return [self.conv.kernels, self.conv,b]
+
+class ResnetBlock(Layer):
+    def __init__(self, num_filters, first_layer_not_first_stack=True):
+        self.num_filters = num_filters
+        self.first_layer_not_first_stack = first_layer_not_first_stack
+
+    def set_input_shape(self, shape):
+        self.input_shape = shape
+        if self.first_layer_not_first_stack:
+            strides = (2, 2)
+        else:
+            strides = (1, 1)
+        self.x1_1 = ResnetLayer(num_filters=self.num_filters, strides=strides)
+        self.x1_1.set_input_shape(shape)
+        self.x1_2 = ResnetLayer(num_filters=self.num_filters, activation=None)
+        self.x1_2.set_input_shape(self.x1_1.get_output_shape())
+        if self.first_layer_not_first_stack:
+            self.x2_1 = ResnetLayer(num_filters=self.num_filters,
+                                  kernel_size=(1, 1),
+                                  strides=strides,
+                                  activation=None,
+                                  batch_normalization=False)
+            self.x2_1.set_input_shape(shape)
+        self.x2_1.output_shape = self.x1_2.get_output_shape()
+
+    def fprop(self, x):
+        x1 = self.x1_1.fprop(x)
+        x1 = self.x1_2.fprop(x1)
+        x2 = self.x2_1.fprop(x) if self.first_layer_not_first_stack else x
+        x = tf.add(x1, x2)
+        x = tf.nn.relu(x)
+        return x
+
+    def get_params(self):
+        params = [self.x1_1.get_params(), self.x1_2.get_params()]
+        if self.first_layer_not_first_stack: params.append(self.x2_1.get_params())
+        return params
+
+def make_simple_cnn(num_filters=64, num_classes=10,
+                   input_shape=(None, 32, 32, 3)):
+    layers = [Conv2D(num_filters, (3, 3), (1, 1), "VALID"),
               ReLU(),
-              Conv2D(nb_filters * 2, (3, 3), (1, 1), "VALID"),
+              Conv2D(num_filters, (3, 3), (1, 1), "VALID"),
               ReLU(),
-              MaxPool(),
+              Pooling('max'),
+
+              Conv2D(num_filters * 2, (3, 3), (1, 1), "VALID"),
+              ReLU(),
+              Conv2D(num_filters * 2, (3, 3), (1, 1), "VALID"),
+              ReLU(),
+              Pooling('max'),
 
               Flatten(),
-              Linear(nb_filters * 4),
+              Linear(num_filters * 4),
               ReLU(),
-              Linear(nb_filters * 4),
+              Linear(num_filters * 4),
               ReLU(),
-              Linear(nb_classes),
+              Linear(num_classes),
               Softmax()]
+
+    model = MLP(layers, input_shape)
+    return model
+
+def make_resnet(depth=32, num_classes=10, input_shape=(None, 32, 32, 3)):
+    if (depth - 2) % 6 != 0:
+        raise ValueError('depth should be 6n+2 (eg 20, 32, 44)')
+    
+    num_filters = 16
+    num_res_blocks = int((depth - 2) / 6)
+    
+    layers = [ResnetLayer()]
+    for stack in range(3):
+        for res_block in range(num_res_blocks):
+            layers.append(ResnetBlock(num_filters=num_filters,
+                                      stack > 0 and res_block == 0))
+        num_filters *= 2
+    layers.extend([Pooling('avg'),
+                   Flatten(),
+                   Linear(num_classes),
+                   Softmax()])
 
     model = MLP(layers, input_shape)
     return model
