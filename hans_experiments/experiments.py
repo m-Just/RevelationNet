@@ -77,12 +77,19 @@ def train_classifier(model_name, nb_epochs):
     y = tf.placeholder(tf.float32, shape=(None, 10))
     
     # Initialize model
+    epoch_step = tf.Variable(0, trainable=False)
     if model_name == 'simple':
         model = make_simple_cnn()
         learning_rate = 0.003
     elif model_name == 'resnet':
         model = make_resnet(depth=32)
         learning_rate = 0.001
+        learning_rate = tf.train.polynomial_decay(
+            learning_rate,
+            global_step=epoch_step,
+            decay_steps=nb_epochs, 
+            end_learning_rate=1e-6,
+            power=0.5)
     else:
         raise ValueError()
     #for layer in model.layers:
@@ -94,6 +101,7 @@ def train_classifier(model_name, nb_epochs):
         'nb_epochs': nb_epochs,
         'batch_size': batch_size,
         'learning_rate': learning_rate,
+        'epoch_step': epoch_step # used for lr decay
     }
     rng = np.random.RandomState([2018, 6, 9])
 
