@@ -164,9 +164,63 @@ def train_classifier(model_name, nb_epochs):
 
     return report
 
+def attack_classifier(model_name, model_savepath):
+    tf.set_random_seed(1822)
+    report = AccuracyReport()
+    set_log_level(logging.DEBUG)
+
+    # Get CIFAR-10 data
+    train_start = 0
+    train_end = 50000
+    test_start = 0
+    test_end = 10000
+    datagen, (x_train, y_train), (x_test, y_test) = \
+        data_cifar10(train_start, train_end, test_start, test_end)
+
+    # Define input TF placeholder
+    x = tf.placeholder(tf.float32, shape=(None, 32, 32, 3))
+    y = tf.placeholder(tf.float32, shape=(None, 10))
+    
+    # Initialize model
+    if model_name == 'simple':
+        model = make_simple_cnn()
+    elif model_name == 'simple_noisy':
+        model = make_simple_cnn(noisy_linear=True)
+    elif model_name == 'resnet':
+        model = make_resnet(depth=32)
+    else:
+        raise ValueError()
+    preds = model.get_probs(x)
+
+    sess = tf.Session()
+    saver = tf.train.Saver(var_list=model.get_params())
+    saver.restore(sess, model_savepath)
+
+    eval_args = {'batch_size': 128}
+    acc = model_eval(sess, x, y, preds, x_test, y_test, args=eval_args)
+    print('Test accuracy on legitimate examples: %.4f' % acc)
+
+    # Initiate attack
+    from cleverhans.attacks import FastGradientMethod
+    fgsm_params = {'eps': 0.3,
+                   'clip_min': 0.,
+                   'clip_max': 1.}
+    fgsm = FastGradientMethod(model, sess=sess)
+    adv_x = fgsm.generate(x, **fgsm_params)
+    preds_adv = model.get_probs(adv_x)
+
+    eval_par = {'batch_size': 128}
+    acc = model_eval(sess, x, y, preds_adv, x_test, y_test, args=eval_par)
+    print('Test accuracy on adversarial examples: %0.4f\n' % acc)
+    report.clean_train_adv_eval = acc
+
+    return report
+
 def main(argv=None):
     #train_classifier(model_name='resnet', nb_epochs=200)
-    train_classifier(model_name='simple', nb_epochs=50)
+    #train_classifier(model_name='simple', nb_epochs=50)
+
+    attack_classifier('simple', './tfmodels/cifar10_simple_model_epoch50')
 
 if __name__ == '__main__':
     tf.app.run()

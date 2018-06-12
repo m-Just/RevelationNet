@@ -82,6 +82,37 @@ class Linear(Layer):
     def get_params(self):
         return [self.W, self.b]
 
+class NoisyLinear(Layer):
+    
+    def __init__(self, num_hid, minval=0, maxval=10, name='dense'):
+        self.num_hid = num_hid
+        self.minval = minval
+        self.maxval = maxval
+        self.name = name
+
+    def set_input_shape(self, input_shape):
+        batch_size, dim = input_shape
+        self.input_shape = [batch_size, dim]
+        self.output_shape = [batch_size, self.num_hid]
+
+        W_shape = [dim, self.num_hid]
+        b_shape = [self.num_hid]
+        init = tf.random_normal(W_shape, dtype=tf.float32)
+        init = init / tf.sqrt(1e-7 + tf.reduce_sum(tf.square(init), axis=0,
+                                                   keep_dims=True))
+        with tf.variable_scope(self.name):
+            self.W = tf.Variable(init, name='weight')
+            self.b = tf.Variable(np.zeros(b_shape).astype('float32'), name='bias')
+            self.W_noise = tf.random_uniform(W_shape, self.minval, self.maxval)
+            self.b_noise = tf.random_uniform(b_shape, self.minval, self.maxval)
+
+    def fprop(self, x):
+        self.noisy_W = self.W * self.W_noise
+        self.noisy_b = self.b * self.b_noise
+        return tf.matmul(x, self.noisy_W) + self.noisy_b
+
+    def get_params(self):
+        return [self.W, self.b]
 
 class Conv2D(Layer):
 
@@ -276,7 +307,8 @@ class ResnetBlock(Layer):
         return params
 
 def make_simple_cnn(num_filters=64, num_classes=10,
-                   input_shape=(None, 32, 32, 3)):
+                    input_shape=(None, 32, 32, 3), noisy_linear=False):
+    LinearLayer = NoisyLinear if noisy_linear else Linear
     layers = [Conv2D(num_filters, (3, 3), (1, 1), "VALID"),
               ReLU(),
               Conv2D(num_filters, (3, 3), (1, 1), "VALID"),
@@ -290,11 +322,11 @@ def make_simple_cnn(num_filters=64, num_classes=10,
               Pooling('max'),
 
               Flatten(),
-              Linear(num_filters * 4),
+              LinearLayer(num_filters * 4),
               ReLU(),
-              Linear(num_filters * 4),
+              LinearLayer(num_filters * 4),
               ReLU(),
-              Linear(num_classes),
+              LinearLayer(num_classes),
               Softmax()]
 
     model = MLP(layers, input_shape)
