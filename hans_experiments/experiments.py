@@ -84,7 +84,7 @@ def train_classifier(model_name, nb_epochs):
     epoch_step = tf.Variable(0, trainable=False)
     if model_name == 'simple':
         model = make_simple_cnn()
-        learning_rate = tf.constant(0.003)
+        learning_rate = tf.constant(0.001)
     elif model_name == 'resnet':
         model = make_resnet(depth=32)
         learning_rate = tf.constant(0.001)
@@ -124,6 +124,7 @@ def train_classifier(model_name, nb_epochs):
         '''
     else:
         raise ValueError()
+    assert len(model.get_params()) == len(tf.trainable_variables())
     #for layer in model.layers:
     #    print(layer.name)
     preds = model.get_probs(x)
@@ -133,7 +134,8 @@ def train_classifier(model_name, nb_epochs):
         'nb_epochs': nb_epochs,
         'batch_size': batch_size,
         'learning_rate': learning_rate,
-        'epoch_step': epoch_step # used for lr decay
+        'epoch_step': epoch_step, # used for lr decay
+        'weight_decay': 1e-4
     }
     rng = np.random.RandomState([2018, 6, 9])
 
@@ -150,6 +152,8 @@ def train_classifier(model_name, nb_epochs):
     model_train(sess, x, y, preds, x_train, y_train, dataflow=dataflow, 
                 evaluate=evaluate, args=train_params, rng=rng,
                 var_list=model.get_params())
+    a = sess.run(tf.trainable_variables()[-5])
+    print(a)
 
     savedir = './tfmodels'
     if not os.path.isdir(savedir):
@@ -161,7 +165,8 @@ def train_classifier(model_name, nb_epochs):
     return report
 
 def main(argv=None):
-    train_classifier(model_name='resnet', nb_epochs=200)
+    #train_classifier(model_name='resnet', nb_epochs=200)
+    train_classifier(model_name='simple', nb_epochs=50)
 
 if __name__ == '__main__':
     tf.app.run()

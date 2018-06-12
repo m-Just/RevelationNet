@@ -60,8 +60,9 @@ class Layer(object):
 
 class Linear(Layer):
 
-    def __init__(self, num_hid):
+    def __init__(self, num_hid, name='dense'):
         self.num_hid = num_hid
+        self.name = name
 
     def set_input_shape(self, input_shape):
         batch_size, dim = input_shape
@@ -70,8 +71,10 @@ class Linear(Layer):
         init = tf.random_normal([dim, self.num_hid], dtype=tf.float32)
         init = init / tf.sqrt(1e-7 + tf.reduce_sum(tf.square(init), axis=0,
                                                    keep_dims=True))
-        self.W = tf.Variable(init)
-        self.b = tf.Variable(np.zeros((self.num_hid,)).astype('float32'))
+        with tf.variable_scope(self.name):
+            self.W = tf.Variable(init, name='weight')
+            self.b = tf.Variable(np.zeros((self.num_hid,)).astype('float32'),
+                                 name='bias')
 
     def fprop(self, x):
         return tf.matmul(x, self.W) + self.b
@@ -82,7 +85,7 @@ class Linear(Layer):
 
 class Conv2D(Layer):
 
-    def __init__(self, output_channels, kernel_shape, strides, padding):
+    def __init__(self, output_channels, kernel_shape, strides, padding, name='conv'):
         self.__dict__.update(locals())
         del self.self
 
@@ -96,9 +99,11 @@ class Conv2D(Layer):
         init = tf.random_normal(kernel_shape, dtype=tf.float32)
         init = init / tf.sqrt(1e-7 + tf.reduce_sum(tf.square(init),
                                                    axis=(0, 1, 2)))
-        self.kernels = tf.Variable(init)
-        self.b = tf.Variable(
-            np.zeros((self.output_channels,)).astype('float32'))
+        with tf.variable_scope(self.name):
+            self.kernels = tf.Variable(init, name='weight')
+            self.b = tf.Variable(
+                np.zeros((self.output_channels,)).astype('float32'),
+                name='bias')
         input_shape = list(input_shape)
         input_shape[0] = 1
         dummy_batch = tf.zeros(input_shape)
@@ -205,10 +210,12 @@ class ResnetLayer(Layer):
 
     def set_input_shape(self, shape):
         self.input_shape = shape
+        name = 'residual_conv' if self.kernel_size == (1, 1) else 'conv'
         self.conv = Conv2D(self.num_filters,
                            self.kernel_size,
                            self.strides,
-                           "SAME")
+                           "SAME",
+                           name=name)
         self.conv.set_input_shape(shape)
         if self.activation is not None:
             self.activation.set_input_shape(self.conv.get_output_shape())
@@ -228,9 +235,10 @@ class ResnetLayer(Layer):
         return [self.conv.kernels, self.conv.b]
 
 class ResnetBlock(Layer):
-    def __init__(self, num_filters, first_layer_not_first_stack=True):
+    def __init__(self, num_filters, first_layer_not_first_stack=True, name='block'):
         self.num_filters = num_filters
         self.first_layer_not_first_stack = first_layer_not_first_stack
+        self.name = name
 
     def set_input_shape(self, shape):
         self.input_shape = shape
@@ -238,17 +246,18 @@ class ResnetBlock(Layer):
             strides = (2, 2)
         else:
             strides = (1, 1)
-        self.x1_1 = ResnetLayer(num_filters=self.num_filters, strides=strides)
-        self.x1_1.set_input_shape(shape)
-        self.x1_2 = ResnetLayer(num_filters=self.num_filters, activation=None)
-        self.x1_2.set_input_shape(self.x1_1.get_output_shape())
-        if self.first_layer_not_first_stack:
-            self.x2_1 = ResnetLayer(num_filters=self.num_filters,
+        with tf.variable_scope(self.name):
+            self.x1_1 = ResnetLayer(num_filters=self.num_filters, strides=strides)
+            self.x1_1.set_input_shape(shape)
+            self.x1_2 = ResnetLayer(num_filters=self.num_filters, activation=None)
+            self.x1_2.set_input_shape(self.x1_1.get_output_shape())
+            if self.first_layer_not_first_stack:
+                self.x2_1 = ResnetLayer(num_filters=self.num_filters,
                                   kernel_size=(1, 1),
                                   strides=strides,
                                   activation=None,
                                   batch_normalization=False)
-            self.x2_1.set_input_shape(shape)
+                self.x2_1.set_input_shape(shape)
         self.output_shape = self.x1_2.get_output_shape()
 
     def fprop(self, x):
@@ -260,8 +269,10 @@ class ResnetBlock(Layer):
         return x
 
     def get_params(self):
-        params = [self.x1_1.get_params(), self.x1_2.get_params()]
-        if self.first_layer_not_first_stack: params.append(self.x2_1.get_params())
+        params = []
+        params.extend(self.x1_1.get_params())
+        params.extend(self.x1_2.get_params())
+        if self.first_layer_not_first_stack: params.extend(self.x2_1.get_params())
         return params
 
 def make_simple_cnn(num_filters=64, num_classes=10,
@@ -299,10 +310,12 @@ def make_resnet(depth=32, num_classes=10, input_shape=(None, 32, 32, 3)):
     layers = [ResnetLayer()]
     for stack in range(3):
         for res_block in range(num_res_blocks):
+            name = 'stack_%d/block_%d' % (stack, res_block)
             layers.append(ResnetBlock(num_filters,
-                                      stack > 0 and res_block == 0))
+                                      stack > 0 and res_block == 0,
+                                      name=name))
         num_filters *= 2
-    layers.extend([Pooling('avg'),
+    layers.extend([Pooling('avg', ksize=[1, 8, 8, 1], strides=[1, 8, 8, 1]),
                    Flatten(),
                    Linear(num_classes),
                    Softmax()])
