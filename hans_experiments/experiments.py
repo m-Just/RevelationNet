@@ -105,25 +105,22 @@ def train_classifier(model_name, nb_epochs):
             (epoch_step > 70, lambda: 1e-5),
             (epoch_step > 50, lambda: 1e-4)],
             default=lambda: 1e-3)
+        '''
         lr1 = tf.train.polynomial_decay(
             learning_rate,
             global_step=epoch_step,
             decay_steps=80,
             end_learning_rate=1e-4,
             power=0.5)
-        lr1 = tf.train.exponential_decay(
-            learning_rate,
-            global_step=epoch_step,
-            decay_steps=80,
-            decay_rate=0.971628)
         lr2 = tf.train.exponential_decay(
             1e-4,
             global_step=epoch_step-80,
-            decay_steps=120,
+            decay_steps=1,
             decay_rate=0.944061)
         learning_rate = tf.cond(epoch_step < 80,
                                 true_fn=lambda: lr1,
                                 false_fn=lambda: lr2)
+        '''
         '''
     else:
         raise ValueError()
