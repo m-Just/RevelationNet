@@ -219,7 +219,7 @@ def attack_classifier(model_name, model_savepath, attack_method='fgsm', target=N
                   'clip_min': 0.,
                   'clip_max': 1.}
         if target is not None:
-            y_target = np.repeat(np.eye(10)[target], nb_samples, axis=0)
+            y_target = np.repeat(np.eye(10)[target:target+1], nb_samples, axis=0)
             params['y_target'] = tf.constant(y_target)
 
     adv_x = method.generate(x, **params)
@@ -228,16 +228,16 @@ def attack_classifier(model_name, model_savepath, attack_method='fgsm', target=N
     indices = range(nb_samples)
     rng = np.random.RandomState([2018, 6, 9])
     rng.shuffle(indices)
-    x_sample = [x_test[indices[i]] for i in range(nb_samples)]
-    y_sample = [y_test[indices[i]] for i in range(nb_samples)]
+    x_sample = np.stack([x_test[indices[i]] for i in range(nb_samples)])
+    y_sample = np.stack([y_test[indices[i]] for i in range(nb_samples)])
 
     eval_par = {'batch_size': min(nb_samples, 128)}
     acc = model_eval(sess, x, y, preds_adv, x_sample, y_sample, args=eval_par)
-    print('Test accuracy on adversarial examples: %0.4f\n' % acc)
+    print('Test accuracy on adversarial examples: %.4f' % acc)
     report.clean_train_adv_eval = acc
     if target is not None:
         acc = model_eval(sess, x, y, preds_adv, x_sample, y_target, args=eval_par)
-        print('Targeted attack success rate on adversarial examples: %0.4f\n' % acc)
+        print('Success rate of targeted attacks on adversarial examples: %.4f' % acc)
 
     return report
 
@@ -245,7 +245,9 @@ def main(argv=None):
     #train_classifier(model_name='resnet', nb_epochs=200)
     #train_classifier(model_name='simple', nb_epochs=50)
 
-    attack_classifier('simple', './tfmodels/cifar10_simple_model_epoch50')
+    attack_classifier('simple_noisy', './tfmodels/cifar10_simple_model_epoch50',
+                      attack_method='basic_iterative',
+                      target=0)
 
 if __name__ == '__main__':
     tf.app.run()
