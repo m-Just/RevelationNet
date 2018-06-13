@@ -2,7 +2,8 @@
 
 ## TODO
 1. Generate adversarial images via Zeroth Order Optimization. 
-2. Train ResNet-32 to 92% accuracy (now 88.5%)
+2. Train ResNet-32 to 92% accuracy (now 88.5%).
+3. Try out new dynamic defense schemes.
 
 ## Notes
 - random multiplier on gradient hinders the convergence of FGSM attack.
