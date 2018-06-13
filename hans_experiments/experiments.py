@@ -164,7 +164,7 @@ def train_classifier(model_name, nb_epochs):
 
     return report
 
-def attack_classifier(model_name, model_savepath):
+def attack_classifier(model_name, model_savepath, attack_method='fgsm', target=None, nb_samples=128):
     tf.set_random_seed(1822)
     report = AccuracyReport()
     set_log_level(logging.DEBUG)
@@ -174,6 +174,7 @@ def attack_classifier(model_name, model_savepath):
     train_end = 50000
     test_start = 0
     test_end = 10000
+    assert nb_samples <= test_end - test_start
     datagen, (x_train, y_train), (x_test, y_test) = \
         data_cifar10(train_start, train_end, test_start, test_end)
 
@@ -190,29 +191,53 @@ def attack_classifier(model_name, model_savepath):
         model = make_resnet(depth=32)
     else:
         raise ValueError()
-    preds = model.get_probs(x)
 
     sess = tf.Session()
     saver = tf.train.Saver(var_list=model.get_params())
     saver.restore(sess, model_savepath)
 
+    # Make sure the model load properly by running it against the test set
+    preds = model.get_probs(x)
     eval_args = {'batch_size': 128}
     acc = model_eval(sess, x, y, preds, x_test, y_test, args=eval_args)
     print('Test accuracy on legitimate examples: %.4f' % acc)
 
     # Initiate attack
-    from cleverhans.attacks import FastGradientMethod
-    fgsm_params = {'eps': 0.3,
-                   'clip_min': 0.,
-                   'clip_max': 1.}
-    fgsm = FastGradientMethod(model, sess=sess)
-    adv_x = fgsm.generate(x, **fgsm_params)
+    if attack_method == 'fgsm':
+        from cleverhans.attacks import FastGradientMethod
+        method = FastGradientMethod(model, sess=sess)
+        params = {'eps': 0.3,
+                  'clip_min': 0.,
+                  'clip_max': 1.}
+
+    elif attack_method == 'basic_iterative':
+        from cleverhans.attacks import BasicIterativeMethod
+        method = BasicIterativeMethod(model, sess=sess)
+        params = {'eps': 0.3,
+                  'eps_iter': 0.02,
+                  'nb_iter': 100,
+                  'clip_min': 0.,
+                  'clip_max': 1.}
+        if target is not None:
+            y_target = np.repeat(np.eye(10)[target], nb_samples, axis=0)
+            params['y_target'] = tf.constant(y_target)
+
+    adv_x = method.generate(x, **params)
     preds_adv = model.get_probs(adv_x)
 
-    eval_par = {'batch_size': 128}
-    acc = model_eval(sess, x, y, preds_adv, x_test, y_test, args=eval_par)
+    indices = range(nb_samples)
+    rng = np.random.RandomState([2018, 6, 9])
+    rng.shuffle(indices)
+    x_sample = [x_test[indices[i]] for i in range(nb_samples)]
+    y_sample = [y_test[indices[i]] for i in range(nb_samples)]
+
+    eval_par = {'batch_size': min(nb_samples, 128)}
+    acc = model_eval(sess, x, y, preds_adv, x_sample, y_sample, args=eval_par)
     print('Test accuracy on adversarial examples: %0.4f\n' % acc)
     report.clean_train_adv_eval = acc
+    if target is not None:
+        acc = model_eval(sess, x, y, preds_adv, x_sample, y_target, args=eval_par)
+        print('Targeted attack success rate on adversarial examples: %0.4f\n' % acc)
 
     return report
 
