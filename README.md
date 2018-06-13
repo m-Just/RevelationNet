@@ -13,6 +13,7 @@
 - `cleverhans`: A modified version of cleverhans.
 - `hans_experiments/cifar10_classifier.py`: Tensorflow cifar10 classifier.
 - `hans_experiments/experiments.py`: cleverhans experiments.
+- `hans_experiments/attacks.py`: self-implemented attacks using cleverhans.
 - `experiments/notebooks`: ipython notebook files.
 - `experiments/FGSM.py`: Adversarial image generating module using modified Fast Gradient Sign Method (FGSM).
 - `experiments/data_loader.py`: Dataset loading utilities, including `load_original_data` and `load_augmented_data`.
