@@ -203,6 +203,7 @@ def attack_classifier(model_name, model_savepath, attack_method='fgsm', target=N
     print('Test accuracy on legitimate examples: %.4f' % acc)
 
     # Initiate attack
+    batch_size = min(nb_samples, 128)
     if attack_method == 'fgsm':
         from cleverhans.attacks import FastGradientMethod
         method = FastGradientMethod(model, sess=sess)
@@ -222,14 +223,17 @@ def attack_classifier(model_name, model_savepath, attack_method='fgsm', target=N
     elif attack_method == 'finite_diff':
         from attacks import FiniteDifferenceMethod
         method = FiniteDifferenceMethod(model, sess=sess)
-        params = {'eps': 0.3,
+        grad_est = tf.Variable(tf.zeros([batch_size, 32, 32, 3]), trainable=False)
+        sess.run(tf.variables_initializer([grad_est]))
+        params = {'grad_est': grad_est,
+                  'eps': 0.3,
                   'delta': 1e-6,
                   'clip_min': 0.,
                   'clip_max': 1.}
 
     if target is not None:
         y_target = np.repeat(np.eye(10)[target:target+1], nb_samples, axis=0)
-        params['y_target'] = tf.constant(y_target)
+        params['y_target'] = tf.constant(y_target, dtype=tf.float32)
 
     adv_x = method.generate(x, **params)
     preds_adv = model.get_probs(adv_x)
@@ -240,7 +244,7 @@ def attack_classifier(model_name, model_savepath, attack_method='fgsm', target=N
     x_sample = np.stack([x_test[indices[i]] for i in range(nb_samples)])
     y_sample = np.stack([y_test[indices[i]] for i in range(nb_samples)])
 
-    eval_par = {'batch_size': min(nb_samples, 128)}
+    eval_par = {'batch_size': batch_size}
     acc = model_eval(sess, x, y, preds_adv, x_sample, y_sample, args=eval_par)
     print('Test accuracy on adversarial examples: %.4f' % acc)
     report.clean_train_adv_eval = acc
@@ -260,7 +264,8 @@ def main(argv=None):
 
     attack_classifier('simple', './tfmodels/cifar10_simple_model_epoch50',
                       attack_method='finite_diff',
-                      nb_samples=1)
+                      nb_samples=128,
+                      target=0)
 
 if __name__ == '__main__':
     tf.app.run()

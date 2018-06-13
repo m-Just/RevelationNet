@@ -2,6 +2,7 @@ from __future__ import division
 
 from itertools import product
 
+import tensorflow as tf
 import numpy as np
 
 from cleverhans.model import Model, CallableModelWrapper
@@ -16,39 +17,54 @@ class FiniteDifferenceMethod(Attack):
 
         super(FiniteDifferenceMethod, self).__init__(model, back, sess, dtypestr)
         self.feedable_kwargs = {'eps': self.np_dtype,
-                                'delta': self.np_dtype}
-        self.structural_kwargs = ['ord']
+                                'delta': self.np_dtype,
+                                'y': self.np_dtype,
+                                'y_target': self.np_dtype,
+                                'clip_min': self.np_dtype,
+                                'clip_max': self.np_dtype}
+        self.structural_kwargs = ['grad_est', 'ord']
 
     def generate(self, x, **kwargs):
         assert self.parse_params(**kwargs)
 
         labels, nb_classes = self.get_or_guess_labels(x, kwargs)
 
-        grad_batch = tf.Variable(tf.zeros(x.get_shape()), trainable=False)
-        _, h, w, c = x.get_shape().as_list()
-        for h, w, c in product(range(h), range(w), range(c)):
-            basis = np.zeros([h, w, c], dtype=np.float32)
-            basis[h, w, c] = self.delta
+        _, H, W, C = x.get_shape().as_list()
+        for h, w, c in product(range(H), range(W), range(C)):
+            basis = np.zeros([H, W, C], dtype=np.float32)
+            basis[h, w, c] = 1.
 
-            pos = x + tf.constant(basis)
+            pos = x + tf.constant(basis * self.delta)
             pos_preds = self.model.get_probs(pos)
 
-            neg = x - tf.constant(basis)
+            neg = x - tf.constant(basis * self.delta)
             neg_preds = self.model.get_probs(neg)
+
+            if self.y_target is None:
+                pos_prob = tf.reduce_sum(pos_preds * labels, axis=1)
+                neg_prob = tf.reduce_sum(neg_preds * labels, axis=1)
+            else:
+                pos_prob = tf.reduce_sum(pos_preds * self.y_target, axis=1)
+                neg_prob = tf.reduce_sum(neg_preds * self.y_target, axis=1)
             
-            grads = (pos_preds - neg_preds) / (2 * self.delta)
-            grad_batch[:, h, w, c] = grads
+            # only sign is required thus magnitude is irrelevant
+            grad = pos_prob - neg_prob
+            # in the original paper the grad is expressed as:
+            # grad = grad / (2 * self.delta) / self.model.get_probs(x)
 
-            if self.y_target is not None: grad_batch = -grad_batch
+            sign = tf.sign(pos_prob - neg_prob)
+            if self.y_target is not None: sign = -sign
+            self.grad_est[:, h, w, c].assign(sign)
 
-        adv_x = x + self.eps * grad_batch
+        adv_x = x + self.eps * self.grad_est
 
         if (self.clip_min is not None) and (self.clip_max is not None):
             adv_x = tf.clip_by_value(adv_x, self.clip_min, self.clip_max)
 
         return adv_x
         
-    def parse_params(self, eps=0.3, delta=1e-6, ord=np.inf, y=None, y_target=None,
+    def parse_params(self, grad_est=None, eps=0.3, delta=1e-6, ord=np.inf,
+                     y=None, y_target=None,
                      clip_min=None, clip_max=None, **kwargs):
         """
         Take in a dictionary of parameters and applies attack-specific checks
@@ -56,6 +72,7 @@ class FiniteDifferenceMethod(Attack):
 
         Attack-specific parameters:
 
+        :param grad_est: a Varaible storing the estimated gradient sign
         :param eps: (optional float) attack step size (input variation)
         :param delta: (optional float) it controls the accuracy of estimation
         :param ord: (optional) Order of the norm (mimics NumPy).
@@ -75,6 +92,8 @@ class FiniteDifferenceMethod(Attack):
 
         # Save attack-specific parameters
 
+        assert grad_est is not None
+        self.grad_est = grad_est
         self.eps = eps
         self.delta = delta
         self.ord = ord
