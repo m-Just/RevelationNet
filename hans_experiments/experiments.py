@@ -254,9 +254,9 @@ def main(argv=None):
     #train_classifier(model_name='resnet', nb_epochs=200)
     #train_classifier(model_name='simple', nb_epochs=50)
 
-    attack_classifier('simple_noisy', './tfmodels/cifar10_simple_model_epoch50',
-                      attack_method='basic_iterative',
-                      target=0)
+    #attack_classifier('simple_noisy', './tfmodels/cifar10_simple_model_epoch50',
+    #                  attack_method='basic_iterative',
+    #                  target=0)
 
     attack_classifier('simple', './tfmodels/cifar10_simple_model_epoch50',
                       attack_method='finite_diff',
