@@ -40,9 +40,9 @@ def data_cifar10(train_start, train_end, test_start, test_end):
     x_train /= 255
     x_test /= 255
 
-    x_train_mean = np.mean(x_train, axis=0)
-    x_train -= x_train_mean
-    x_test -= x_train_mean
+    #x_train_mean = np.mean(x_train, axis=0)
+    #x_train -= x_train_mean
+    #x_test -= x_train_mean
 
     datagen = ImageDataGenerator(
         featurewise_center=False,  # set input mean to 0 over the dataset
@@ -152,8 +152,8 @@ def train_classifier(model_name, nb_epochs):
     model_train(sess, x, y, preds, x_train, y_train, dataflow=dataflow, 
                 evaluate=evaluate, args=train_params, rng=rng,
                 var_list=model.get_params())
-    a = sess.run(tf.trainable_variables()[-5])
-    print(a)
+    #a = sess.run(tf.trainable_variables()[-5])
+    #print(a)
 
     savedir = './tfmodels'
     if not os.path.isdir(savedir):
@@ -170,7 +170,7 @@ def attack_classifier(model_name,
                       attack_method='fgsm',
                       target=None, nb_samples=128):
     assert run_mode in ['static', 'query_dynamic']
-    assert isinstance(nb_samples) and nb_samples > 0
+    assert isinstance(nb_samples, int) and nb_samples > 0
 
     tf.set_random_seed(1822)
     report = AccuracyReport()
@@ -184,6 +184,16 @@ def attack_classifier(model_name,
     assert nb_samples <= test_end - test_start
     datagen, (x_train, y_train), (x_test, y_test) = \
         data_cifar10(train_start, train_end, test_start, test_end)
+
+    pixel_val_min = np.min(x_test)
+    pixel_val_max = np.max(x_test)
+
+    indices = range(nb_samples)
+    rng = np.random.RandomState([2018, 6, 9])
+    rng.shuffle(indices)
+    x_sample = np.stack([x_test[indices[i]] for i in range(nb_samples)])
+    y_sample = np.stack([y_test[indices[i]] for i in range(nb_samples)])
+
 
     # Define input TF placeholder
     x = tf.placeholder(tf.float32, shape=(None, 32, 32, 3))
@@ -205,9 +215,13 @@ def attack_classifier(model_name,
 
     # Make sure the model load properly by running it against the test set
     preds = model.get_probs(x)
-    eval_args = {'batch_size': 128}
-    acc = model_eval(sess, x, y, preds, x_test, y_test, args=eval_args)
+    eval_par = {'batch_size': 128}
+    acc = model_eval(sess, x, y, preds, x_test, y_test, args=eval_par)
+    print('On all samples from test set:')
     print('Test accuracy on legitimate examples: %.4f' % acc)
+
+    eval_par = {'batch_size': min(nb_samples, 128)}
+    sample_acc = model_eval(sess, x, y, preds, x_sample, y_sample, args=eval_par)
 
     # Set attack parameters
     if attack_method == 'fgsm':
@@ -217,8 +231,8 @@ def attack_classifier(model_name,
                   'clip_min': 0.,
                   'clip_max': 1.}
         if not run_mode == 'static':
-            raise ValueError('Single-step attack does not support
-                             run_mode: %s' % run_mode)
+            raise ValueError('Single-step attack does not support' +
+                             'run_mode: %s' % run_mode)
 
     elif attack_method == 'basic_iterative':
         from cleverhans.attacks import BasicIterativeMethod
@@ -234,12 +248,21 @@ def attack_classifier(model_name,
     elif attack_method == 'finite_diff':
         from attacks import FiniteDifferenceMethod
         method = FiniteDifferenceMethod(model, sess=sess)
+        x_train_mean = np.mean(x_train, axis=0)
         params = {'eps': 0.3,
-                  'delta': 1e-6,
+                  'delta': 1e-3,
                   'clip_min': 0.,
                   'clip_max': 1.}
 
-    # Prepare data for the attack
+    # Validate params
+    for param, value in params.items():
+        print('%s=%g' % (param, value))
+        if param == 'clip_min' and value > pixel_val_min:
+            print('Warning: clip_min larger than x_test min')
+        if param == 'clip_max' and value < pixel_val_max:
+            print('Warning: clip_max smaller than x_test max')
+
+    # Set up attack target
     if target is None:
         y_target = None
     else:
@@ -247,19 +270,13 @@ def attack_classifier(model_name,
         y_target = tf.constant(y_target)
     params['y_target'] = y_target
 
-    indices = range(nb_samples)
-    rng = np.random.RandomState([2018, 6, 9])
-    rng.shuffle(indices)
-    x_sample = np.stack([x_test[indices[i]] for i in range(nb_samples)])
-    y_sample = np.stack([y_test[indices[i]] for i in range(nb_samples)])
-
     # Initiate attack
     if run_mode == 'static':
         adv_x = method.generate(x, **params)
         preds_adv = model.get_probs(adv_x)
 
     elif run_mode == 'query_dynamic':
-        adv_x_val = method.generate_np(x_sample, y_sample, y_target)
+        adv_x_val = method.generate_np(x_sample, y_sample, **params)
         preds_adv = model.get_probs(x)
         x_sample = adv_x_val
 
@@ -267,28 +284,30 @@ def attack_classifier(model_name,
         raise ValueError()
 
     # Evaluate accuracy
-    eval_par = {'batch_size': min(nb_samples, 128)}
-    acc = model_eval(sess, x, y, preds_adv, x_sample, y_sample, args=eval_par)
-    print('Test accuracy on adversarial examples: %.4f' % acc)
-    report.clean_train_adv_eval = acc
+    print('On %d random samples from test set:' % nb_samples)
+    print('Test accuracy on legitimate examples: %.4f' % sample_acc)
+
+    sample_acc = model_eval(sess, x, y, preds_adv, x_sample, y_sample, args=eval_par)
+    print('Test accuracy on adversarial examples: %.4f' % sample_acc)
+    report.clean_train_adv_eval = sample_acc
     if target is not None:
-        acc = model_eval(sess, x, y, preds_adv, x_sample, y_target, args=eval_par)
-        print('Success rate of targeted attacks on adversarial examples: %.4f' % acc)
+        sample_acc = model_eval(sess, x, y, preds_adv, x_sample, y_target, args=eval_par)
+        print('Success rate of targeted attacks on adversarial examples: %.4f' % sample_acc)
         
     return report
 
 def main(argv=None):
     #train_classifier(model_name='resnet', nb_epochs=200)
-    #train_classifier(model_name='simple', nb_epochs=50)
+    train_classifier(model_name='simple', nb_epochs=50)
 
     #attack_classifier('simple_noisy', './tfmodels/cifar10_simple_model_epoch50',
     #                  attack_method='basic_iterative',
     #                  target=0)
 
-    attack_classifier('simple', './tfmodels/cifar10_simple_model_epoch50',
-                      model_type='query_dynamic',
-                      attack_method='finite_diff',
-                      nb_samples=1)
+    #attack_classifier('simple', './tfmodels/cifar10_simple_model_epoch50',
+    #                  run_mode='query_dynamic',
+    #                  attack_method='finite_diff',
+    #                  nb_samples=128)
 
 if __name__ == '__main__':
     tf.app.run()

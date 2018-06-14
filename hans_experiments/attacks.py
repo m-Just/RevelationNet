@@ -2,6 +2,7 @@ from __future__ import division
 
 from itertools import product
 
+import tensorflow as tf
 import numpy as np
 
 from cleverhans.model import Model, CallableModelWrapper
@@ -17,7 +18,10 @@ class FiniteDifferenceMethod(Attack):
         super(FiniteDifferenceMethod, self).__init__(model, back, sess, dtypestr)
 
     def generate_np(self, x_val, y_val, y_target=None, ord=np.inf,
-                    eps=0.3, delta=1e-3, clip_min=0. clip_max=1.):
+                    eps=0.3, delta=1e-3, clip_min=0., clip_max=1.):
+
+        #print('eps=%g' % eps)
+        #print('delta=%E' % delta)
         assert isinstance(x_val, np.ndarray)
         assert isinstance(y_val, np.ndarray)
         if y_target is not None:
@@ -26,13 +30,15 @@ class FiniteDifferenceMethod(Attack):
         # construct graph
         x_shape = x_val.shape
         B, H, W, C = x_shape
-        if B <= 128:
-            raise ValueError('Large batch size may cause OOM, no more 
-                             than 128 is recommended')
+        if B > 128:
+            raise ValueError('Large batch size may cause OOM, no more' +
+                             'than 128 is recommended')
 
         x = tf.placeholder(tf.float32, x_shape)
         adv_target = y_val if y_target is None else y_target
-        prob = tf.reduce_sum(x * tf.constant(adv_target), axis=1)
+        adv_target = tf.constant(adv_target, tf.float32)
+        prob = self.model.get_probs(x)
+        prob = tf.reduce_sum(prob * adv_target, axis=1)
 
         # generate adversarial samples
         grad_est = np.zeros(x_shape, dtype=np.float32)
@@ -55,6 +61,6 @@ class FiniteDifferenceMethod(Attack):
 
         adv_x = x_val + grad_est
         if (clip_min is not None) and (clip_max is not None):
-            adv_x = np.clip_by_value(adv_x, clip_min, clip_max)
+            adv_x = np.clip(adv_x, clip_min, clip_max)
 
         return adv_x
