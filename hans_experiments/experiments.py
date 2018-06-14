@@ -218,9 +218,18 @@ def attack_classifier(model_name, model_savepath, attack_method='fgsm', target=N
                   'nb_iter': 100,
                   'clip_min': 0.,
                   'clip_max': 1.}
-        if target is not None:
-            y_target = np.repeat(np.eye(10)[target:target+1], nb_samples, axis=0)
-            params['y_target'] = tf.constant(y_target)
+    
+    elif attack_method == 'finite_diff':
+        from attacks import FiniteDifferenceMethod
+        method = FiniteDifferenceMethod(model, sess=sess)
+        params = {'eps': 0.3,
+                  'delta': 1e-6,
+                  'clip_min': 0.,
+                  'clip_max': 1.}
+
+    if target is not None:
+        y_target = np.repeat(np.eye(10)[target:target+1], nb_samples, axis=0)
+        params['y_target'] = tf.constant(y_target)
 
     adv_x = method.generate(x, **params)
     preds_adv = model.get_probs(adv_x)
@@ -248,6 +257,10 @@ def main(argv=None):
     attack_classifier('simple_noisy', './tfmodels/cifar10_simple_model_epoch50',
                       attack_method='basic_iterative',
                       target=0)
+
+    attack_classifier('simple', './tfmodels/cifar10_simple_model_epoch50',
+                      attack_method='finite_diff',
+                      nb_samples=1)
 
 if __name__ == '__main__':
     tf.app.run()
