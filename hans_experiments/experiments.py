@@ -164,7 +164,14 @@ def train_classifier(model_name, nb_epochs):
 
     return report
 
-def attack_classifier(model_name, model_savepath, attack_method='fgsm', target=None, nb_samples=128):
+def attack_classifier(model_name,
+                      model_savepath,
+                      run_mode='static',
+                      attack_method='fgsm',
+                      target=None, nb_samples=128):
+    assert run_mode in ['static', 'query_dynamic']
+    assert isinstance(nb_samples) and nb_samples > 0
+
     tf.set_random_seed(1822)
     report = AccuracyReport()
     set_log_level(logging.DEBUG)
@@ -202,13 +209,16 @@ def attack_classifier(model_name, model_savepath, attack_method='fgsm', target=N
     acc = model_eval(sess, x, y, preds, x_test, y_test, args=eval_args)
     print('Test accuracy on legitimate examples: %.4f' % acc)
 
-    # Initiate attack
+    # Set attack parameters
     if attack_method == 'fgsm':
         from cleverhans.attacks import FastGradientMethod
         method = FastGradientMethod(model, sess=sess)
         params = {'eps': 0.3,
                   'clip_min': 0.,
                   'clip_max': 1.}
+        if not run_mode == 'static':
+            raise ValueError('Single-step attack does not support
+                             run_mode: %s' % run_mode)
 
     elif attack_method == 'basic_iterative':
         from cleverhans.attacks import BasicIterativeMethod
@@ -218,6 +228,8 @@ def attack_classifier(model_name, model_savepath, attack_method='fgsm', target=N
                   'nb_iter': 100,
                   'clip_min': 0.,
                   'clip_max': 1.}
+        if run_mode == 'query_dynamic':
+            raise NotImplementedError()
     
     elif attack_method == 'finite_diff':
         from attacks import FiniteDifferenceMethod
@@ -227,12 +239,13 @@ def attack_classifier(model_name, model_savepath, attack_method='fgsm', target=N
                   'clip_min': 0.,
                   'clip_max': 1.}
 
-    if target is not None:
+    # Prepare data for the attack
+    if target is None:
+        y_target = None
+    else:
         y_target = np.repeat(np.eye(10)[target:target+1], nb_samples, axis=0)
-        params['y_target'] = tf.constant(y_target)
-
-    adv_x = method.generate(x, **params)
-    preds_adv = model.get_probs(adv_x)
+        y_target = tf.constant(y_target)
+    params['y_target'] = y_target
 
     indices = range(nb_samples)
     rng = np.random.RandomState([2018, 6, 9])
@@ -240,6 +253,20 @@ def attack_classifier(model_name, model_savepath, attack_method='fgsm', target=N
     x_sample = np.stack([x_test[indices[i]] for i in range(nb_samples)])
     y_sample = np.stack([y_test[indices[i]] for i in range(nb_samples)])
 
+    # Initiate attack
+    if run_mode == 'static':
+        adv_x = method.generate(x, **params)
+        preds_adv = model.get_probs(adv_x)
+
+    elif run_mode == 'query_dynamic':
+        adv_x_val = method.generate_np(x_sample, y_sample, y_target)
+        preds_adv = model.get_probs(x)
+        x_sample = adv_x_val
+
+    else:
+        raise ValueError()
+
+    # Evaluate accuracy
     eval_par = {'batch_size': min(nb_samples, 128)}
     acc = model_eval(sess, x, y, preds_adv, x_sample, y_sample, args=eval_par)
     print('Test accuracy on adversarial examples: %.4f' % acc)
@@ -247,7 +274,7 @@ def attack_classifier(model_name, model_savepath, attack_method='fgsm', target=N
     if target is not None:
         acc = model_eval(sess, x, y, preds_adv, x_sample, y_target, args=eval_par)
         print('Success rate of targeted attacks on adversarial examples: %.4f' % acc)
-
+        
     return report
 
 def main(argv=None):
@@ -259,6 +286,7 @@ def main(argv=None):
     #                  target=0)
 
     attack_classifier('simple', './tfmodels/cifar10_simple_model_epoch50',
+                      model_type='query_dynamic',
                       attack_method='finite_diff',
                       nb_samples=1)
 
