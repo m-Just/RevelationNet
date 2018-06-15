@@ -168,7 +168,9 @@ def attack_classifier(model_name,
                       model_savepath,
                       run_mode='static',
                       attack_method='fgsm',
-                      target=None, nb_samples=128):
+                      iteration=1,
+                      target=None,
+                      nb_samples=128):
     assert run_mode in ['static', 'query_dynamic']
     assert isinstance(nb_samples, int) and nb_samples > 0
 
@@ -218,7 +220,7 @@ def attack_classifier(model_name,
     eval_par = {'batch_size': 128}
     acc = model_eval(sess, x, y, preds, x_test, y_test, args=eval_par)
     print('On all samples from test set:')
-    print('Test accuracy on legitimate examples: %.4f' % acc)
+    print('  Test accuracy on legitimate examples: %.4f' % acc)
 
     eval_par = {'batch_size': min(nb_samples, 128)}
     sample_acc = model_eval(sess, x, y, preds, x_sample, y_sample, args=eval_par)
@@ -248,18 +250,22 @@ def attack_classifier(model_name,
     elif attack_method == 'finite_diff':
         from attacks import FiniteDifferenceMethod
         method = FiniteDifferenceMethod(model, sess=sess)
-        x_train_mean = np.mean(x_train, axis=0)
-        params = {'eps': 0.3,
-                  'delta': 1e-3,
+        params = {'eps': 8./255,
+                  'delta': 1./255,
                   'clip_min': 0.,
                   'clip_max': 1.}
+        if run_mode == 'static':
+            raise NotImplementedError()
 
     # Validate params
+    print('Attack method: %s' % attack_method)
+    print('  iteration=%s' % iteration)
+    print('  target=%s' % target)
     for param, value in params.items():
-        print('%s=%g' % (param, value))
-        if param == 'clip_min' and value > pixel_val_min:
+        print('  %s=%s' % (param, value))
+        if param == 'clip_min' and value is not None and value > pixel_val_min:
             print('Warning: clip_min larger than x_test min')
-        if param == 'clip_max' and value < pixel_val_max:
+        if param == 'clip_max' and value is not None and value < pixel_val_max:
             print('Warning: clip_max smaller than x_test max')
 
     # Set up attack target
@@ -267,47 +273,70 @@ def attack_classifier(model_name,
         y_target = None
     else:
         y_target = np.repeat(np.eye(10)[target:target+1], nb_samples, axis=0)
-        y_target = tf.constant(y_target)
     params['y_target'] = y_target
 
     # Initiate attack
     if run_mode == 'static':
-        adv_x = method.generate(x, **params)
+        if params['y_target'] is None:
+            del params['y_target']
+            params['y'] = model.get_probs(x)
+        adv_x = x
+        for step in range(iteration):
+            adv_x = method.generate(adv_x, **params)
         preds_adv = model.get_probs(adv_x)
 
+        _x_sample = x_sample
+
     elif run_mode == 'query_dynamic':
-        adv_x_val = method.generate_np(x_sample, y_sample, **params)
-        preds_adv = model.get_probs(x)
-        x_sample = adv_x_val
+        if target is None:
+            # prevent label leaking
+            labels = sess.run(preds, feed_dict={x: x_sample})
+        else:
+            labels = None
+        adv_x_val = x_sample
+        for step in range(iteration):
+            adv_x_val = method.generate_np(adv_x_val, labels, **params)
+        preds_adv = preds
+
+        _x_sample = adv_x_val
 
     else:
         raise ValueError()
 
     # Evaluate accuracy
     print('On %d random samples from test set:' % nb_samples)
-    print('Test accuracy on legitimate examples: %.4f' % sample_acc)
-
-    sample_acc = model_eval(sess, x, y, preds_adv, x_sample, y_sample, args=eval_par)
-    print('Test accuracy on adversarial examples: %.4f' % sample_acc)
+    sample_acc = model_eval(sess, x, y, preds, x_sample, y_sample, args=eval_par)
+    print('  Test accuracy on legitimate examples: %.4f' % sample_acc)
+    sample_acc = model_eval(sess, x, y, preds_adv, _x_sample, y_sample, args=eval_par)
+    print('  Test accuracy on adversarial examples: %.4f' % sample_acc)
     report.clean_train_adv_eval = sample_acc
     if target is not None:
-        sample_acc = model_eval(sess, x, y, preds_adv, x_sample, y_target, args=eval_par)
-        print('Success rate of targeted attacks on adversarial examples: %.4f' % sample_acc)
+        sample_acc = model_eval(sess, x, y, preds, x_sample, y_target, args=eval_par)
+        print('  Target classification rate on legitimate examples: %.4f' % sample_acc)
+        sample_acc = model_eval(sess, x, y, preds_adv, _x_sample, y_target, args=eval_par)
+        print('  Target classification rate on adversarial examples: %.4f' % sample_acc)
+
+    for t in range(10):
+        target_n = np.repeat(np.eye(10)[t:t+1], nb_samples, axis=0)
+        sample_acc = model_eval(sess, x, y, preds_adv, _x_sample, target_n, args=eval_par)
+        print('  Target-%d classification rate on adversarial examples: %.4f' % (t, sample_acc))
         
     return report
 
 def main(argv=None):
     #train_classifier(model_name='resnet', nb_epochs=200)
-    train_classifier(model_name='simple', nb_epochs=50)
+    #train_classifier(model_name='simple', nb_epochs=50)
 
     #attack_classifier('simple_noisy', './tfmodels/cifar10_simple_model_epoch50',
     #                  attack_method='basic_iterative',
     #                  target=0)
 
-    #attack_classifier('simple', './tfmodels/cifar10_simple_model_epoch50',
-    #                  run_mode='query_dynamic',
-    #                  attack_method='finite_diff',
-    #                  nb_samples=128)
+    attack_classifier('simple', './tfmodels/cifar10_simple_model_epoch50',
+                      run_mode='query_dynamic',
+                      attack_method='finite_diff',
+                      nb_samples=128,
+                      iteration=5,
+                      target=1)
 
 if __name__ == '__main__':
     tf.app.run()

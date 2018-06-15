@@ -20,18 +20,17 @@ class FiniteDifferenceMethod(Attack):
     def generate_np(self, x_val, y_val, y_target=None, ord=np.inf,
                     eps=0.3, delta=1e-3, clip_min=0., clip_max=1.):
 
-        #print('eps=%g' % eps)
-        #print('delta=%E' % delta)
         assert isinstance(x_val, np.ndarray)
-        assert isinstance(y_val, np.ndarray)
+        if y_val is not None:
+            assert isinstance(y_val, np.ndarray)
         if y_target is not None:
             assert isinstance(y_target, np.ndarray)
 
         # construct graph
         x_shape = x_val.shape
-        B, H, W, C = x_shape
-        if B > 128:
-            raise ValueError('Large batch size may cause OOM, no more' +
+        N, H, W, C = x_shape
+        if N > 128:
+            raise ValueError('Large batch size may cause OOM, no more '
                              'than 128 is recommended')
 
         x = tf.placeholder(tf.float32, x_shape)
@@ -54,7 +53,7 @@ class FiniteDifferenceMethod(Attack):
             else:
                 raise NotImplementedError('Only L-inf is currently implemented')
 
-            if y_target is not None: grad = -grad
+            if y_target is None: grad = -grad
             grad_est[:, h, w, c] = grad
 
             basis[h, w, c] = 0.
