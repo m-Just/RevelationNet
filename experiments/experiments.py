@@ -105,6 +105,14 @@ def train_classifier():
     saver.save(sess, CLASSIFIER_PATH)
     print('Saved trained model at %s ' % CLASSIFIER_PATH)
 
+import keras.backend as K
+from keras.callbacks import Callback
+class SGDLearningRateTracker(Callback):
+    def on_epoch_end(self, epoch, logs={}):
+        optimizer = self.model.optimizer
+        lr = K.eval(optimizer.lr * (1. / (1. + optimizer.decay * K.cast(optimizer.iterations, K.dtype(optimizer.decay)))))
+        print('\nLR: {:.6f}\n'.format(lr))
+
 def train_keras_classifier():
     from cifar10_classifier import Classifier
     from keras.optimizers import SGD
@@ -130,7 +138,8 @@ def train_keras_classifier():
             datagen.flow(x_train, y_train, batch_size=batch_size),
             epochs=epochs,
             validation_data=(x_test, y_test),
-            workers=4)
+            workers=4,
+            callbacks=[SGDLearningRateTracker()])
     else:
         print('Not using data augmentation.')
         (x_train, y_train), (x_test, y_test) = data_loader.load_original_data()
@@ -139,6 +148,7 @@ def train_keras_classifier():
             epochs=epochs,
             validation_data=(x_test, y_test),
             shuffle=True)
+            
 
     # save as tensorflow model
     if not os.path.isdir(SAVE_DIR):
@@ -241,9 +251,9 @@ def attack_classifier(_Classifier, target_label,
 
 if __name__ == '__main__':
     #train_classifier()
-    #train_keras_classifier()
+    train_keras_classifier()
 
     from classifiers import *
     #attack_classifier(Classifier, target_label=0, eps_val=0.02, lr_val=3e-3)
-    attack_classifier(InputPerturbedClassifier, target_label=0, eps_val=0.02, lr_val=3e-3, perturb_input=True, perturb_scale=0.1)
+    #attack_classifier(InputPerturbedClassifier, target_label=0, eps_val=0.02, lr_val=3e-3, perturb_input=True, perturb_scale=0.1)
     #attack_classifier(NoisyClassifier, target_label=0)
