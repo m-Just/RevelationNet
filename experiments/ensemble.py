@@ -162,6 +162,7 @@ def transfer_attack(BaseClassifier, target_label=None):
         return tf.reduce_mean(tf.cast(correct_pred, tf.float32), 0)
 
     # use model-A to generate adversarial images and test transferability on model-B
+    eps_val = 0.2
     correctA = 0
     correctB = 0
     fidelityA = deceivedA = 0.
@@ -184,25 +185,60 @@ def transfer_attack(BaseClassifier, target_label=None):
             if not targeted:
                 target_label = np.argmax(sample_y)
 
-            adv_img = fgsm_agent.generate(sess, sample_x, target_label, eps_val=0.2, lr_val=3e-3, num_steps=100)
+            adv_img = fgsm_agent.generate(sess, sample_x, target_label,
+                eps_val=eps_val, lr_val=3e-3, num_steps=100)
             adv_imgs.append(adv_img[-1])
+            perturbation = adv_img[-1] - sample_x
             y_real.append(sample_y)
+
+            # select perturbations within a specific range to apply
+            p_upper = eps_val
+            p_lower = 0.16
+            p_abs = np.abs(perturbation)
+            adv_feed = np.where(np.all([p_abs <= p_upper, p_abs >= p_lower], axis=0), adv_img[-1], sample_x)
                 
+            # test accuracy
             fidelityA += sess.run(eval_accA, feed_dict={y_: [sample_y]})
-            fidelityB += sess.run(eval_accB, feed_dict={x: adv_img[-1], y_: [sample_y]})
+            fidelityB += sess.run(eval_accB, feed_dict={x: adv_feed, y_: [sample_y]})
             if targeted:
                 target_y = np.eye(10)[target_label]
                 deceivedA += sess.run(eval_accA, feed_dict={y_: [target_y]})
-                deceivedB += sess.run(eval_accB, feed_dict={x: adv_img[-1], y_: [target_y]})
+                deceivedB += sess.run(eval_accB, feed_dict={x: adv_feed, y_: [target_y]})
             else:
                 predA[sess.run(tf.squeeze(tf.argmax(modelA.logits, axis=1)))] += 1
-                predB[sess.run(tf.squeeze(tf.argmax(modelB.logits, axis=1)), feed_dict={x: adv_img[-1]})] += 1
+                predB[sess.run(tf.squeeze(tf.argmax(modelB.logits, axis=1)), feed_dict={x: adv_feed})] += 1
+
+                #print(sess.run(tf.nn.softmax(modelB.logits), feed_dict={x: sample_x}))
+                #print(sess.run(tf.nn.softmax(modelB.logits), feed_dict={x: adv_img[-1]}))
+
+            # perturbation analytical metrics
+            print('L-one: %.6f' % sess.run(tf.norm(perturbation, ord=1)))
+            print('L-two: %.6f' % sess.run(tf.norm(perturbation, ord=2)))
+            print('L-inf: %.6f' % sess.run(tf.norm(perturbation, ord=np.inf)))
+
+            num_sectors = 11
+            t = 32 * 32 * 3
+            for p in range(num_sectors):
+                upper_bound = eps_val * (num_sectors - 2 * p) / num_sectors
+                lower_bound = eps_val * (num_sectors - 2 * (p + 1)) / num_sectors
+                if upper_bound > 0 and lower_bound > 0:
+                    a = np.where(np.where(perturbation <= upper_bound, perturbation, -1) > lower_bound, 1, 0)
+                    c = np.count_nonzero(a)
+                    print('Perturbation within (%+.2f, %+.2f]: %.2f' % (lower_bound, upper_bound, float(c) / t))
+                elif upper_bound < 0 and lower_bound < 0:
+                    a = np.where(np.where(perturbation < upper_bound, perturbation, -1) > lower_bound, 1, 0)
+                    c = np.count_nonzero(a)
+                    print('Perturbation within [%+.2f, %+.2f): %.2f' % (lower_bound, upper_bound, float(c) / t))
+                else:
+                    a = np.where(np.where(perturbation <= upper_bound, perturbation, -1) >= lower_bound, 1, 0)
+                    c = np.count_nonzero(a)
+                    print('Perturbation within [%+.2f, %+.2f]: %.2f' % (lower_bound, upper_bound, float(c) / t))
 
     print(('Targeted' if targeted else 'Non-targeted') + ' transfer attack results:')
     print('Model-A Classification accuracy: %f' % (correctA / num_samples))
     print('Model-B Classification accuracy: %f' % (correctB / num_samples))
     print('Generated adversarial images %d/%d' % (len(adv_imgs), num_samples))
-    
+
     n = len(adv_imgs)
     print('Model-A Fidelity rate on test set: %f' % (fidelityA / n))
     print('Model-B Fidelity rate on test set: %f' % (fidelityB / n))
