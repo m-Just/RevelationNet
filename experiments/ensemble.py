@@ -138,16 +138,16 @@ def transfer_attack(BaseClassifier, target_label=None):
     saver.restore(sess, PRETRAINED_PATH)
 
     # original model with random normal kernel initialization
-    #var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='modelB')
-    #var_list = dict([('conv'+var.op.name[6:], var) for var in var_list])
-    #saver = tf.train.Saver(var_list=var_list)
-    #saver.restore(sess, './saved_models/pretrained_model_rn')
+    var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='modelB')
+    var_list = dict([('conv'+var.op.name[6:], var) for var in var_list])
+    saver = tf.train.Saver(var_list=var_list)
+    saver.restore(sess, './saved_models/pretrained_model_rn')
 
     # ensemble models
     #saver = tf.train.Saver(var_list=[var for var in tf.trainable_variables() if var.op.name.startswith('modelA')])
     #saver.restore(sess, '../saved_models/new_model/ensemble_modelA')
-    saver = tf.train.Saver(var_list=[var for var in tf.trainable_variables() if var.op.name.startswith('modelB')])
-    saver.restore(sess, '../saved_models/new_model/ensemble_modelB')
+    #saver = tf.train.Saver(var_list=[var for var in tf.trainable_variables() if var.op.name.startswith('modelB')])
+    #saver.restore(sess, '../saved_models/new_model/ensemble_modelB')
 
     adv_imgs = []
     y_real = []
@@ -163,6 +163,10 @@ def transfer_attack(BaseClassifier, target_label=None):
 
     # use model-A to generate adversarial images and test transferability on model-B
     eps_val = 0.2
+    p_upper = eps_val + 1e-6
+    p_lower = 0. - 1e-6
+    num_steps = 100
+
     correctA = 0
     correctB = 0
     fidelityA = deceivedA = 0.
@@ -186,16 +190,17 @@ def transfer_attack(BaseClassifier, target_label=None):
                 target_label = np.argmax(sample_y)
 
             adv_img = fgsm_agent.generate(sess, sample_x, target_label,
-                eps_val=eps_val, lr_val=3e-3, num_steps=100)
+                eps_val=eps_val, num_steps=num_steps)
             adv_imgs.append(adv_img[-1])
             perturbation = adv_img[-1] - sample_x
             y_real.append(sample_y)
 
             # select perturbations within a specific range to apply
-            p_upper = eps_val
-            p_lower = 0.16
             p_abs = np.abs(perturbation)
             adv_feed = np.where(np.all([p_abs <= p_upper, p_abs >= p_lower], axis=0), adv_img[-1], sample_x)
+            p_feed = np.count_nonzero(adv_feed - sample_x) / float(32 * 32 * 3)
+            print('Selected perturbation within [%.2f, %.2f]: %.2f' % (p_lower, p_upper, p_feed))
+            sess.run(assign_op, feed_dict={x: adv_feed})
                 
             # test accuracy
             fidelityA += sess.run(eval_accA, feed_dict={y_: [sample_y]})
@@ -212,27 +217,30 @@ def transfer_attack(BaseClassifier, target_label=None):
                 #print(sess.run(tf.nn.softmax(modelB.logits), feed_dict={x: adv_img[-1]}))
 
             # perturbation analytical metrics
-            print('L-one: %.6f' % sess.run(tf.norm(perturbation, ord=1)))
-            print('L-two: %.6f' % sess.run(tf.norm(perturbation, ord=2)))
-            print('L-inf: %.6f' % sess.run(tf.norm(perturbation, ord=np.inf)))
+            d = 32 * 32 * 3
+
+            print('L-one: %.4f' % sess.run(tf.norm(perturbation, ord=1)))
+            print('L-two: %.4f' % sess.run(tf.norm(perturbation, ord=2)))
+            print('L-inf: %.4f' % sess.run(tf.norm(perturbation, ord=np.inf)))
+            RMSD = sess.run(tf.norm(perturbation, ord=2) / (d ** 0.5))
+            print('RMSD : %.4f/1 | %.4f/255' % (RMSD, RMSD * 255))
 
             num_sectors = 11
-            t = 32 * 32 * 3
             for p in range(num_sectors):
-                upper_bound = eps_val * (num_sectors - 2 * p) / num_sectors
-                lower_bound = eps_val * (num_sectors - 2 * (p + 1)) / num_sectors
+                upper_bound = eps_val * (num_sectors - 2 * p) / num_sectors + 1e-6
+                lower_bound = eps_val * (num_sectors - 2 * (p + 1)) / num_sectors - 1e-6
                 if upper_bound > 0 and lower_bound > 0:
                     a = np.where(np.where(perturbation <= upper_bound, perturbation, -1) > lower_bound, 1, 0)
                     c = np.count_nonzero(a)
-                    print('Perturbation within (%+.2f, %+.2f]: %.2f' % (lower_bound, upper_bound, float(c) / t))
+                    print('Perturbation within (%+.2f, %+.2f]: %.2f' % (lower_bound, upper_bound, float(c) / d))
                 elif upper_bound < 0 and lower_bound < 0:
-                    a = np.where(np.where(perturbation < upper_bound, perturbation, -1) > lower_bound, 1, 0)
+                    a = np.where(np.where(perturbation < upper_bound, perturbation, -1) >= lower_bound, 1, 0)
                     c = np.count_nonzero(a)
-                    print('Perturbation within [%+.2f, %+.2f): %.2f' % (lower_bound, upper_bound, float(c) / t))
+                    print('Perturbation within [%+.2f, %+.2f): %.2f' % (lower_bound, upper_bound, float(c) / d))
                 else:
                     a = np.where(np.where(perturbation <= upper_bound, perturbation, -1) >= lower_bound, 1, 0)
                     c = np.count_nonzero(a)
-                    print('Perturbation within [%+.2f, %+.2f]: %.2f' % (lower_bound, upper_bound, float(c) / t))
+                    print('Perturbation within [%+.2f, %+.2f]: %.2f' % (lower_bound, upper_bound, float(c) / d))
 
     print(('Targeted' if targeted else 'Non-targeted') + ' transfer attack results:')
     print('Model-A Classification accuracy: %f' % (correctA / num_samples))
@@ -258,4 +266,4 @@ if __name__ == '__main__':
     PRETRAINED_PATH = '../saved_models/pretrained_model'
 
     #twin(Classifier)
-    transfer_attack(Classifier)
+    transfer_attack(Classifier, target_label=None)
