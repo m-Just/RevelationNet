@@ -1,11 +1,16 @@
 import os
 import shutil
 import random
+import pickle
 
 from collections import OrderedDict
 
 import tensorflow as tf
 import numpy as np
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 def twin(BaseClassifier, batch_size=128):
 
@@ -122,9 +127,9 @@ def transfer_attack(BaseClassifier, target_label=None):
     with tf.variable_scope('modelB'):
         modelB = BaseClassifier(x)
 
-    from FGSM import Generator
+    from gradient_attack import Generator
     targeted = (target_label is not None)
-    fgsm_agent = Generator(32, x_adv, modelA.logits, targeted=targeted)
+    fgsm_agent = Generator('FG', 32, x_adv, modelA.logits, targeted=targeted)
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -150,7 +155,6 @@ def transfer_attack(BaseClassifier, target_label=None):
     #saver.restore(sess, '../saved_models/new_model/ensemble_modelB')
 
     adv_imgs = []
-    y_real = []
     (x_train, y_train), (x_test, y_test) = data_loader.load_original_data()
 
     indices = range(len(y_test))
@@ -174,6 +178,8 @@ def transfer_attack(BaseClassifier, target_label=None):
     predA = [0. for _ in range(10)]
     predB = [0. for _ in range(10)]
     num_samples = 100
+    
+    results = {'samples': dict(), 'hyperparam': dict()}
     for i in range(num_samples):
         sample_x = x_test[indices[i]]
         sample_y = y_test[indices[i]]
@@ -193,13 +199,24 @@ def transfer_attack(BaseClassifier, target_label=None):
                 eps_val=eps_val, num_steps=num_steps)
             adv_imgs.append(adv_img[-1])
             perturbation = adv_img[-1] - sample_x
-            y_real.append(sample_y)
 
             # select perturbations within a specific range to apply
             p_abs = np.abs(perturbation)
             adv_feed = np.where(np.all([p_abs <= p_upper, p_abs >= p_lower], axis=0), adv_img[-1], sample_x)
-            p_feed = np.count_nonzero(adv_feed - sample_x) / float(32 * 32 * 3)
-            print('Selected perturbation within [%.2f, %.2f]: %.2f' % (p_lower, p_upper, p_feed))
+
+            # random noise perturbation
+            #adv_feed = sample_x + sess.run(tf.truncated_normal([32, 32, 3], stddev=0.5*eps_val))
+            #perturbation = adv_feed - sample_x
+
+            # random selected partial perturbation
+            #adv_feed = np.where((p_abs * 1e6).astype(np.int32) % 10, sample_x, adv_img[-1])
+
+            # reversed perturbation
+            #adv_feed = 2 * sample_x - adv_feed
+
+            p_feed = adv_feed - sample_x
+            p_rate = np.count_nonzero(p_feed) / float(32 * 32 * 3)
+            print('Selected perturbation within [%.2f, %.2f]: %.2f' % (p_lower, p_upper, p_rate))
             sess.run(assign_op, feed_dict={x: adv_feed})
                 
             # test accuracy
@@ -213,8 +230,12 @@ def transfer_attack(BaseClassifier, target_label=None):
                 predA[sess.run(tf.squeeze(tf.argmax(modelA.logits, axis=1)))] += 1
                 predB[sess.run(tf.squeeze(tf.argmax(modelB.logits, axis=1)), feed_dict={x: adv_feed})] += 1
 
-                #print(sess.run(tf.nn.softmax(modelB.logits), feed_dict={x: sample_x}))
-                #print(sess.run(tf.nn.softmax(modelB.logits), feed_dict={x: adv_img[-1]}))
+            sess.run(assign_op, feed_dict={x: sample_x})
+            legitimate_softmax = sess.run(tf.nn.softmax(modelA.logits))[0]
+            sess.run(assign_op, feed_dict={x: adv_img[-1]})
+            adversarial_softmax = sess.run(tf.nn.softmax(modelA.logits))[0]
+            sess.run(assign_op, feed_dict={x: adv_feed})
+            partial_adv_softmax = sess.run(tf.nn.softmax(modelA.logits))[0]
 
             # perturbation analytical metrics
             d = 32 * 32 * 3
@@ -242,6 +263,28 @@ def transfer_attack(BaseClassifier, target_label=None):
                     c = np.count_nonzero(a)
                     print('Perturbation within [%+.2f, %+.2f]: %.2f' % (lower_bound, upper_bound, float(c) / d))
 
+            # save results
+            #plt.imsave('./results/images/%d.png' % len(adv_imgs), sample_x)
+            #plt.imsave('./results/adv_imgs/%d.png' % len(adv_imgs), adv_imgs[-1])
+            #plt.imsave('./results/adv_feed/%d.png' % len(adv_imgs), adv_feed)
+            
+            data = dict()
+            data['lgt_sm'] = legitimate_softmax
+            data['adv_sm'] = adversarial_softmax
+            data['label'] = np.argmax(sample_y)
+            data['target'] = target_label
+
+            results['samples'][str(len(adv_imgs))] = data
+
+            results['hyperparam']['eps'] = eps_val
+            results['hyperparam']['eps_upper_bound'] = p_upper
+            results['hyperparam']['eps_lower_bound'] = p_lower
+            results['hyperparam']['step'] = num_steps
+
+    #f = open('./results/data.pickle', 'wb')
+    #pickle.dump(results, f)
+    #f.close()
+
     print(('Targeted' if targeted else 'Non-targeted') + ' transfer attack results:')
     print('Model-A Classification accuracy: %f' % (correctA / num_samples))
     print('Model-B Classification accuracy: %f' % (correctB / num_samples))
@@ -256,7 +299,6 @@ def transfer_attack(BaseClassifier, target_label=None):
     else:
         for i in range(10):
             print('Model-A predictied as label-%d: %f' % (i, predA[i] / n))
-        for i in range(10):
             print('Model-B predictied as label-%d: %f' % (i, predB[i] / n))
 
 if __name__ == '__main__':

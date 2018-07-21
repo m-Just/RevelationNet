@@ -1,13 +1,14 @@
 import tensorflow as tf
 
 class Generator():
-    def __init__(self, imgsize, conv_input, logits, targeted=True, cls_no=10):
+    def __init__(self, method, imgsize, conv_input, logits, targeted=True, cls_no=10):
         imgshape = (imgsize, imgsize, 3)
         self.x = tf.placeholder(tf.float32, imgshape)
         self.y_adv = tf.placeholder(tf.int32, ())
         self.x_adv = conv_input
         self.targeted = targeted
         self.epsilon = tf.placeholder(tf.float32, ())
+        self.num_steps = tf.placeholder(tf.float32, ())
 
         self.assign_op = tf.assign(self.x_adv, self.x)
 
@@ -19,16 +20,21 @@ class Generator():
         else:
             min_objective = -self.loss
 
-        # Using adaptive learning rate for FGM
-        gradient, _ = tf.train.GradientDescentOptimizer(1.)\
-            .compute_gradients(min_objective, var_list=[self.x_adv])[0]
-        lr = self.epsilon / tf.norm(gradient, ord=2)
-        #lr = self.epsilon / tf.reduce_mean(self.loss)
-        self.optim_step = tf.train.GradientDescentOptimizer(lr).minimize(min_objective, var_list=[self.x_adv])
-        
-        #optimizer = tf.train.GradientDescentOptimizer(self.lr)
-        #sign = tf.sign(optimizer.compute_gradients(min_objective, var_list=[self.x_adv])[0][0]) * self.epsilon
-        #self.optim_step = tf.assign(self.x_adv, sign + self.x_adv)
+        print('Using %s attack' % method)
+        if method == 'FG':
+            # Using adaptive learning rate for FGM
+            gradient, _ = tf.train.GradientDescentOptimizer(1.)\
+                .compute_gradients(min_objective, var_list=[self.x_adv])[0]
+            lr = self.epsilon / tf.norm(gradient, ord=2)
+            #lr = self.epsilon / tf.reduce_mean(self.loss)
+            self.optim_step = tf.train.GradientDescentOptimizer(lr).minimize(min_objective, var_list=[self.x_adv])
+
+        elif method == 'FGS':
+            optimizer = tf.train.GradientDescentOptimizer(1.)
+            grad = optimizer.compute_gradients(-min_objective, var_list=[self.x_adv])[0][0]
+            step_size = self.epsilon / (imgsize * imgsize * 3) ** 0.5
+            pert = tf.sign(grad) * step_size
+            self.optim_step = tf.assign_add(self.x_adv, pert)
 
         below = self.x - self.epsilon
         above = self.x + self.epsilon
@@ -42,7 +48,8 @@ class Generator():
         modified = image
         for i in range(num_steps):
             sess.run(self.assign_op, feed_dict={self.x: modified})
-            _, loss_val = sess.run([self.optim_step, self.loss], feed_dict={self.y_adv: target, self.epsilon: eps_val})
+            _, loss_val = sess.run([self.optim_step, self.loss],
+                feed_dict={self.y_adv: target, self.epsilon: eps_val, self.num_steps: num_steps})
             sess.run(self.project_step, feed_dict={self.x: image, self.epsilon: eps_val})
             if (i + 1) % 10 == 0:
                 print('step %d, loss=%g' % (i+1, loss_val))
