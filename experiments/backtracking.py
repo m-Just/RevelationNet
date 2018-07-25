@@ -182,8 +182,6 @@ def adv_test():
 
 def adv_reverse():
     (x_train, y_train), (x_test, y_test) = data_loader.load_original_data()
-    x_adv, _ = load_adversarial_samples()
-    y_adv = y_train
     
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -195,6 +193,7 @@ def adv_reverse():
 
     assign_op = tf.assign(x_adv_, x)
     model = build_graph_init(x_adv_, sess, expand_dim=True, pretrained=PRETRAINED_PATH)
+    prediction = tf.squeeze(tf.argmax(model.logits, axis=1))
     accuracy = eval_acc(model.logits, y_)
 
     # initiate attack
@@ -202,33 +201,84 @@ def adv_reverse():
     targeted = (target is not None)
     eps_val = 0.2
     num_steps = 100
-
     adversary = Generator('FG', 32, x_adv_, model.logits, targeted=targeted)
 
-    num_samples = 100
-
-    reverse_rate = 0.
-    reverse_imgs = []
     np.random.seed(2018)
+    num_samples = 100
+    recovered = 0.
+    result_imgs = []
+
     for i in range(num_samples):
-        sample_x = x_adv[i]
-        #sample_x += (np.random.rand(32, 32, 3) - 0.5) / 5 * 2
-        sample_x = np.clip(np.clip(sample_x, x_adv[i] - eps_val, x_adv[i] + eps_val), 0., 1.)
-        sample_y = y_adv[i]
+        sess.run(assign_op, feed_dict={x: x_test[i]})
+        logits, lgt_pred = sess.run([model.logits, prediction])
+        ranking = [(label, logit) for label, logit for enumerate(logits)]
+        ranking.sort(key=lambda x: x[1], reverse=True)
+        print('Legitimate image %d' % i)
+        print('  Ground-truth label: %d' % np.argmax(y_test[i]))
+        print('  Predicted class:    %d' % lgt_pred)
+        print('  Class rankings (legitimate):', ranking)
 
+        # generate adversarial image from test set on fly
+        print('Generating adversarial image %d' % i)
+        x_adv = adversary.generate(sess, x_test[i], np.argmax(y_test[i]),
+            eps_val=eps_val, num_steps=num_steps)
+        y_adv = y_test[i]
+        sess.run(assign_op, feed_dict={x: x_adv})
+        logits, pred = sess.run([model.logits, prediction])
+        assert pred != np.argmax(y_adv) # successful attack
+        print('  Changed prediction %d -> %d' % (lgt_pred, pred))
+        ranking = [(label, logit) for label, logit for enumerate(logits)]
+        ranking.sort(key=lambda x: x[1], reverse=True)
+        print('  Class rankings (clean adversarial):', ranking)
+
+        # apply adequate noise to the adversarial image
+        print('Applying noise to adversarial image %d' % i)
+        max_loss = -1.
+        for n in range(100): # search for random noise that maximize the loss
+            noise = (np.random.rand(32, 32, 3) - 0.5) / 5 * 2
+            noisy_img = x_adv + noise
+            sess.run(assign_op, feed_dict={x: noisy_img})
+            loss = sess.run(adversary.loss, feed_dict={y_: pred})
+            if loss > max_loss:
+                max_loss = loss
+                sample_x = noisy_img
+        sample_x = np.clip(sample_x, 0., 1.) # TODO is clipping necessary?
+        sample_y = y_adv
+
+        # attack the adversarial image
+        print('Attacking adversarial image %d' % i)
         sess.run(assign_op, feed_dict={x: sample_x})
-        pred = sess.run(tf.argmax(model.logits, axis=1))[0]
-        if pred != np.argmax(sample_y):
-            print('Image %d:' % i)
-            reverse_img = adversary.generate(sess, x_adv[i], pred,
-                eps_val=eps_val, num_steps=num_steps, loss_thresh=1.)#0.6931472)
-            reverse_imgs.append(reverse_img)
-            perturbation = reverse_img - x_train[i]
-            evaluate_perturbation(perturbation)
+        assert pred == sess.run(prediction) # noise should not change prediction
+        logits = sess.run(model.logits)
+        ranking = [(label, logit) for label, logit for enumerate(logits)]
+        ranking.sort(key=lambda x: x[1], reverse=True)
+        print('  Class rankings (noisy adversarial):', ranking)
 
-            reverse_rate += sess.run(accuracy, feed_dict={y_: [sample_y]})
-    print(reverse_rate / len(reverse_imgs))
+        clipping_base = x_adv # TODO or use the noisy one?
+        loss_thresh = 1.#0.6931472 # TODO try different values
+        result_img = adversary.generate(sess, clipping_base, pred,
+            eps_val=eps_val, num_steps=num_steps, loss_thresh=loss_thresh)
+        result_imgs.append(result_img)
 
+        perturbation = result_img - x_test[i]
+        evaluate_perturbation(perturbation)
+
+        # evaluate recovery status
+        r_logits, r_pred, r_correct = sess.run(
+            [model.logits, prediction, accuracy],
+            feed_dict={y_: [sample_y]})
+        if r_correct == 1.:
+            print('Image %d successfully recovered')
+            recovered += 1
+        else:
+            print('Image %d failed to recover')
+        ranking = [(label, logit) for label, logit for enumerate(r_logits)]
+        ranking.sort(key=lambda x: x[1], reverse=True)
+        print('  Ground-truth label: %d' % np.argmax(sample_y))
+        print('  Predicted class:    %d' % r_pred)
+        print('  Class rankings (after attempted recovery):', ranking)
+
+    print('Recovery rate: %f' % (recovered / len(result_imgs)))
 
 if __name__ == '__main__':
     #adv_train()
