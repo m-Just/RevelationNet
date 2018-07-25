@@ -2,6 +2,7 @@ import os
 import shutil
 import random
 import pickle
+import time
 
 from collections import OrderedDict
 
@@ -195,8 +196,10 @@ def transfer_attack(BaseClassifier, target_label=None):
             if not targeted:
                 target_label = np.argmax(sample_y)
 
+            st = time.time()
             adv_img = fgsm_agent.generate(sess, sample_x, target_label,
                 eps_val=eps_val, num_steps=num_steps)
+            print('Time spent: %fs' % (time.time() - st))
             adv_imgs.append(adv_img[-1])
             perturbation = adv_img[-1] - sample_x
 
@@ -204,8 +207,12 @@ def transfer_attack(BaseClassifier, target_label=None):
             p_abs = np.abs(perturbation)
             adv_feed = np.where(np.all([p_abs <= p_upper, p_abs >= p_lower], axis=0), adv_img[-1], sample_x)
 
-            # random noise perturbation
+            # random noise perturbation (truncated normal; L1, L2, Linf match fgm step 100)
             #adv_feed = sample_x + sess.run(tf.truncated_normal([32, 32, 3], stddev=0.5*eps_val))
+            #perturbation = adv_feed - sample_x
+
+            # random noise perturbation (truncated uniform, match fgm step 2000 - convergence)
+            #adv_feed = sample_x + sess.run(tf.clip_by_value(tf.random_uniform([32, 32, 3], -0.45, 0.45), -0.2, 0.2))
             #perturbation = adv_feed - sample_x
 
             # random selected partial perturbation

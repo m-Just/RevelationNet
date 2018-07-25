@@ -42,7 +42,7 @@ class Generator():
         with tf.control_dependencies([projected]):
             self.project_step = tf.assign(self.x_adv, projected)
 
-    def generate(self, sess, image, target, eps_val=0.01, num_steps=100):
+    def generate(self, sess, image, target, eps_val=0.01, num_steps=100, loss_thresh=None):
         adv_imgs = []
 
         modified = image
@@ -50,10 +50,14 @@ class Generator():
             sess.run(self.assign_op, feed_dict={self.x: modified})
             _, loss_val = sess.run([self.optim_step, self.loss],
                 feed_dict={self.y_adv: target, self.epsilon: eps_val, self.num_steps: num_steps})
+                
             sess.run(self.project_step, feed_dict={self.x: image, self.epsilon: eps_val})
             if (i + 1) % 10 == 0:
                 print('step %d, loss=%g' % (i+1, loss_val))
             modified = sess.run(self.x_adv)
             adv_imgs.append(modified)
+
+            if loss_thresh is not None:
+                if loss_val > loss_thresh: break
 
         return adv_imgs

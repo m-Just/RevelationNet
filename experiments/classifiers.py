@@ -2,10 +2,12 @@ import tensorflow as tf
 
 class Classifier(object):
     def __init__(self, x, regularizer=None, expand_dim=True,
+        output_units=10,
         conv_layer=tf.layers.conv2d,
         dense_layer=tf.layers.dense):
 
         self.regularizer = regularizer
+        self.output_units = output_units
         self.conv_layer = conv_layer
         self.dense_layer = dense_layer
 
@@ -85,7 +87,7 @@ class Classifier(object):
         )
         self.logits = self.dense_layer(
             inputs = prev_layer,
-            units = 10,
+            units = self.output_units,
             activation = lambda t:t,
             kernel_regularizer = self.regularizer,
             name = 'dense_3',
