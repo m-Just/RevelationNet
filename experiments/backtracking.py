@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import time
 
 import numpy as np
@@ -59,9 +61,7 @@ def evaluate_perturbation(p):
     l_one = np.sum(np.abs(p))
     l_two = np.sqrt(np.sum(p ** 2))
     l_inf = np.max(np.abs(p))
-    print('L-one: %.2f' % l_one)
-    print('L-two: %.2f' % l_two)
-    print('L-inf: %.2f' % l_inf)
+    return l_one, l_two, l_inf
     
 def adv_train():
 
@@ -180,7 +180,12 @@ def adv_test():
     acc_val /= num_batches
     print('Test accurcacy on adversarial images: %f' % acc_val)
 
-def adv_reverse():
+def get_ranking(sess, logits):
+    ranking = [(label, logit) for label, logit in enumerate(logits)]
+    ranking.sort(key=lambda x: x[1], reverse=True)
+    return [label for label, logit in ranking]
+
+def backtrack():
     (x_train, y_train), (x_test, y_test) = data_loader.load_original_data()
     
     config = tf.ConfigProto()
@@ -199,11 +204,12 @@ def adv_reverse():
     # initiate attack
     target = None
     targeted = (target is not None)
-    eps_val = 0.2
+    eps_val = 0.02
     num_steps = 100
     adversary = Generator('FG', 32, x_adv_, model.logits, targeted=targeted)
 
     np.random.seed(2018)
+    noise_sampling_n = 10
     num_samples = 100
     recovered = 0.
     result_imgs = []
@@ -211,120 +217,80 @@ def adv_reverse():
     for i in range(num_samples):
         sess.run(assign_op, feed_dict={x: x_test[i]})
         logits, lgt_pred = sess.run([model.logits, prediction])
-        ranking = [(label, logit) for label, logit for enumerate(logits)]
-        ranking.sort(key=lambda x: x[1], reverse=True)
-        print('Legitimate image %d' % i)
+        print('\nLegitimate image %d' % i)
         print('  Ground-truth label: %d' % np.argmax(y_test[i]))
         print('  Predicted class:    %d' % lgt_pred)
-        print('  Class rankings (legitimate):', ranking)
+        print('  Class rankings (legitimate):', get_ranking(sess, logits[0]))
+        if lgt_pred != np.argmax(y_test[i]):
+            print('Wrong prediction: skip image %d' % i)
+            continue
 
         # generate adversarial image from test set on fly
         print('Generating adversarial image %d' % i)
         x_adv = adversary.generate(sess, x_test[i], np.argmax(y_test[i]),
-            eps_val=eps_val, num_steps=num_steps)
+            eps_val=eps_val, num_steps=num_steps)[-1]
         y_adv = y_test[i]
         sess.run(assign_op, feed_dict={x: x_adv})
         logits, pred = sess.run([model.logits, prediction])
-        assert pred != np.argmax(y_adv) # successful attack
-        print('  Changed prediction %d -> %d' % (lgt_pred, pred))
-        ranking = [(label, logit) for label, logit for enumerate(logits)]
-        ranking.sort(key=lambda x: x[1], reverse=True)
-        print('  Class rankings (clean adversarial):', ranking)
+        if pred != np.argmax(y_adv): # successful attack
+            print('  Changed prediction %d -> %d' % (lgt_pred, pred))
+        else:
+            print('  Unsuccessful attack: skip image %d' % i)
+            continue
+        print('  Class rankings (clean adversarial):', get_ranking(sess, logits[0]))
 
         # apply adequate noise to the adversarial image
         print('Applying noise to adversarial image %d' % i)
         max_loss = -1.
-        for n in range(100): # search for random noise that maximize the loss
-            noise = (np.random.rand(32, 32, 3) - 0.5) / 5 * 2
+        for n in range(noise_sampling_n): # search for random noise that maximize the loss
+            #noise = (np.random.rand(32, 32, 3) - 0.5) * eps_val * 2
+            noise = ((np.random.rand(32, 32, 3) >= 0.5) - 0.5) * eps_val * 4
             noisy_img = x_adv + noise
             sess.run(assign_op, feed_dict={x: noisy_img})
-            loss = sess.run(adversary.loss, feed_dict={y_: pred})
+            loss = sess.run(adversary.loss, feed_dict={adversary.y_adv: pred})
             if loss > max_loss:
                 max_loss = loss
                 sample_x = noisy_img
         sample_x = np.clip(sample_x, 0., 1.) # TODO is clipping necessary?
         sample_y = y_adv
 
-        # attack the adversarial image
-        print('Attacking adversarial image %d' % i)
         sess.run(assign_op, feed_dict={x: sample_x})
-        assert pred == sess.run(prediction) # noise should not change prediction
+        #if pred != sess.run(prediction): # noise should not change prediction
+        #    print('Noise changed prediction: skip image %d' % i)
+        #    continue
         logits = sess.run(model.logits)
-        ranking = [(label, logit) for label, logit for enumerate(logits)]
-        ranking.sort(key=lambda x: x[1], reverse=True)
-        print('  Class rankings (noisy adversarial):', ranking)
+        print('  Class rankings (noisy adversarial):', get_ranking(sess, logits[0]))
 
-        clipping_base = x_adv # TODO or use the noisy one?
-        loss_thresh = 1.#0.6931472 # TODO try different values
+        # attack the adversarial image
+        print('Recovering adversarial image %d' % i)
+        clipping_base = sample_x # using noisy one as base is much better than the clean one
+        step_scale = 0.5
+        loss_thresh = None#1.#0.6931472 # TODO try different values
         result_img = adversary.generate(sess, clipping_base, pred,
-            eps_val=eps_val, num_steps=num_steps, loss_thresh=loss_thresh)
+            eps_val=eps_val, num_steps=int(num_steps/step_scale), step_scale=step_scale, loss_thresh=loss_thresh)
         result_imgs.append(result_img)
 
-        perturbation = result_img - x_test[i]
-        evaluate_perturbation(perturbation)
+        #evaluate_perturbation(result_img - x_test[i])
 
         # evaluate recovery status
         r_logits, r_pred, r_correct = sess.run(
             [model.logits, prediction, accuracy],
             feed_dict={y_: [sample_y]})
         if r_correct == 1.:
-            print('Image %d successfully recovered')
+            print('Image %d successfully recovered' % i)
             recovered += 1
         else:
-            print('Image %d failed to recover')
-        ranking = [(label, logit) for label, logit for enumerate(r_logits)]
-        ranking.sort(key=lambda x: x[1], reverse=True)
+            print('Image %d failed to recover' % i)
         print('  Ground-truth label: %d' % np.argmax(sample_y))
         print('  Predicted class:    %d' % r_pred)
-        print('  Class rankings (after attempted recovery):', ranking)
+        print('  Class rankings (after attempted recovery):', get_ranking(sess, r_logits[0]))
 
+    print()
+    print('Recovery attempts: %d/%d' % (len(result_imgs), num_samples))
     print('Recovery rate: %f' % (recovered / len(result_imgs)))
 
 if __name__ == '__main__':
     #adv_train()
     #adv_test()
 
-    adv_reverse()
-
-'''
-target = None
-targeted = (target is not None)
-eps_val = 0.2
-num_steps = 100
-
-x = tf.placeholder(tf.float32, [32, 32, 3])
-x_adv = tf.Variable(tf.zeros([32, 32, 3]))
-y_= tf.placeholder(tf.float32, [1, 10])
-assign_op = tf.assign(x_adv, x)
-
-with tf.variable_scope('conv'):
-    model = Classifier(x_adv)
-adversary = Generator('FG', 32, x_adv, model.logits, targeted=targeted)
-
-sess.run(tf.global_variables_initializer())
-
-var_list = [var for var in tf.trainable_variables() if var.op.name.startswith('conv')]
-saver = tf.train.Saver(var_list=var_list)
-saver.restore(sess, PRETRAINED_PATH)
-print('Restored variables:')
-for var in var_list:
-    print(var.op.name)
-
-(x_train, y_train), (x_test, y_test) = data_loader.load_original_data()
-
-
-correct = 0.
-
-start_time = time.time()
-for i in range(len(x_train)):
-    sess.run(assign_op, feed_dict={x: x_train[i]})
-    adv_img = adversary.generate(sess, x_train[i], np.argmax(y_train[i]), eps_val=eps_val, num_steps=num_steps)[-1]
-    adv_img = np.around(np.array(adv_img) * 255)
-
-    sess.run(assign_op, feed_dict={x: adv_img / 255.})
-    correct += sess.run(accuracy, feed_dict={y_: [y_train[i]]})
-    print('%d/%d: accuracy=%f' % (i + 1, len(x_train), correct / (i + 1)))
-
-    plt.imsave('./adv_imgs/%d.png' % i, adv_img.astype(np.uint8))
-print('Time spent: %ds' % (time.time() - start_time))
-'''
+    backtrack()
