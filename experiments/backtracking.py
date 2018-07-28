@@ -3,6 +3,7 @@ from __future__ import print_function
 import time
 
 import numpy as np
+import scipy
 import tensorflow as tf
 from keras.preprocessing.image import ImageDataGenerator
 
@@ -58,9 +59,10 @@ def validate(sess, accuracy, x, y_, x_test, y_test):
     print('Test accurcacy on legitimate images: %f' % acc_val)
 
 def evaluate_perturbation(p):
-    l_one = np.sum(np.abs(p))
+    abs_p = np.abs(p)
+    l_one = np.sum(abs_p)
     l_two = np.sqrt(np.sum(p ** 2))
-    l_inf = np.max(np.abs(p))
+    l_inf = np.max(abs_p)
     return l_one, l_two, l_inf
     
 def adv_train():
@@ -263,14 +265,13 @@ def backtrack():
 
         # attack the adversarial image
         print('Recovering adversarial image %d' % i)
-        clipping_base = sample_x # using noisy one as base is much better than the clean one
-        step_scale = 0.5
+        #clipping_base = sample_x # using noisy one as base is much better than the clean one
+        clipping_base = scipy.ndimage.filters.gaussian_filter(sample_x, sigma=0.5)
+        step_scale = 1.
         loss_thresh = None#1.#0.6931472 # TODO try different values
         result_img = adversary.generate(sess, clipping_base, pred,
             eps_val=eps_val, num_steps=int(num_steps/step_scale), step_scale=step_scale, loss_thresh=loss_thresh)
         result_imgs.append(result_img)
-
-        #evaluate_perturbation(result_img - x_test[i])
 
         # evaluate recovery status
         r_logits, r_pred, r_correct = sess.run(
@@ -284,6 +285,10 @@ def backtrack():
         print('  Ground-truth label: %d' % np.argmax(sample_y))
         print('  Predicted class:    %d' % r_pred)
         print('  Class rankings (after attempted recovery):', get_ranking(sess, r_logits[0]))
+        l1, l2, linf = evaluate_perturbation(result_img - x_test[i])
+        print('  Perturbation L1  : %f' % l1)
+        print('  Perturbation L2  : %f' % l2)
+        print('  Perturbation Linf: %f' % linf)
 
     print()
     print('Recovery attempts: %d/%d' % (len(result_imgs), num_samples))
