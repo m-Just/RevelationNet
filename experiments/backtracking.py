@@ -214,6 +214,9 @@ def backtrack():
     noise_sampling_n = 10
     num_samples = 100
     recovered = 0.
+    gt_rank_adv = [0. for i in range(10)]
+    gt_rank_noisy = [0. for i in range(10)]
+    gt_rank_rc = [0. for i in range(10)]
     result_imgs = []
 
     for i in range(num_samples):
@@ -239,7 +242,9 @@ def backtrack():
         else:
             print('  Unsuccessful attack: skip image %d' % i)
             continue
-        print('  Class rankings (clean adversarial):', get_ranking(sess, logits[0]))
+        ranking = get_ranking(sess, logits[0])
+        gt_rank_adv[ranking.index(lgt_pred)] += 1
+        print('  Class rankings (clean adversarial):', ranking)
 
         # apply adequate noise to the adversarial image
         print('Applying noise to adversarial image %d' % i)
@@ -261,7 +266,9 @@ def backtrack():
         #    print('Noise changed prediction: skip image %d' % i)
         #    continue
         logits = sess.run(model.logits)
-        print('  Class rankings (noisy adversarial):', get_ranking(sess, logits[0]))
+        ranking = get_ranking(sess, logits[0])
+        gt_rank_noisy[ranking.index(lgt_pred)] += 1
+        print('  Class rankings (noisy adversarial):', ranking)
 
         # attack the adversarial image
         print('Recovering adversarial image %d' % i)
@@ -282,9 +289,11 @@ def backtrack():
             recovered += 1
         else:
             print('Image %d failed to recover' % i)
+        ranking = get_ranking(sess, r_logits[0])
+        gt_rank_rc[ranking.index(lgt_pred)] += 1
         print('  Ground-truth label: %d' % np.argmax(sample_y))
         print('  Predicted class:    %d' % r_pred)
-        print('  Class rankings (after attempted recovery):', get_ranking(sess, r_logits[0]))
+        print('  Class rankings (after attempted recovery):', ranking)
         l1, l2, linf = evaluate_perturbation(result_img - x_test[i])
         print('  Perturbation L1  : %f' % l1)
         print('  Perturbation L2  : %f' % l2)
@@ -293,6 +302,16 @@ def backtrack():
     print()
     print('Recovery attempts: %d/%d' % (len(result_imgs), num_samples))
     print('Recovery rate: %f' % (recovered / len(result_imgs)))
+
+    print('Ranking percentage of ground truth label (clean adversarial)')
+    for i in range(10):
+        print('  #%d: %f' % (i + 1, gt_rank_adv[i] / len(result_imgs)))
+    print('Ranking percentage of ground truth label (noisy adversarial)')
+    for i in range(10):
+        print('  #%d: %f' % (i + 1, gt_rank_noisy[i] / len(result_imgs)))
+    print('Ranking percentage of ground truth label (after attempted recovery)')
+    for i in range(10):
+        print('  #%d: %f' % (i + 1, gt_rank_rc[i] / len(result_imgs)))
 
 if __name__ == '__main__':
     #adv_train()
