@@ -187,32 +187,22 @@ def get_ranking(sess, logits):
     ranking.sort(key=lambda x: x[1], reverse=True)
     return [label for label, logit in ranking]
 
-def backtrack():
+def backtrack(attack_method='FG', target=None, eps_val=0.02, num_steps=100,
+              noise_scale=1., sigma=0.5, recover_num_steps=100,
+              attack_optimize_method='sgd', recover_optimize_method='sgd',
+              recover_step_scale=1., recover_loss_thresh=None):
+
     (x_train, y_train), (x_test, y_test) = data_loader.load_original_data()
-    
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth = True
-    sess = tf.Session(config=config)
-
-    x = tf.placeholder(tf.float32, [32, 32, 3])
-    x_adv_ = tf.Variable(tf.zeros([32, 32, 3]))
-    y_= tf.placeholder(tf.float32, [1, 10])
-
-    assign_op = tf.assign(x_adv_, x)
-    model = build_graph_init(x_adv_, sess, expand_dim=True, pretrained=PRETRAINED_PATH)
-    prediction = tf.squeeze(tf.argmax(model.logits, axis=1))
-    accuracy = eval_acc(model.logits, y_)
 
     # initiate attack
-    target = None
     targeted = (target is not None)
-    eps_val = 0.02
-    num_steps = 100
-    adversary = Generator('FG', 32, x_adv_, model.logits, targeted=targeted)
+    adversary1 = Generator(attack_method, 32, x_adv_, model.logits, targeted=targeted, optimize_method=attack_optimize_method)
+    adversary2 = Generator('FG', 32, x_adv_, model.logits, targeted=False, optimize_method=recover_optimize_method)
 
     np.random.seed(2018)
     noise_sampling_n = 10
     num_samples = 100
+    avg_l1 = avg_l2 = avg_linf = 0.
     recovered = 0.
     gt_rank_adv = [0. for i in range(10)]
     gt_rank_noisy = [0. for i in range(10)]
@@ -226,18 +216,23 @@ def backtrack():
         print('  Ground-truth label: %d' % np.argmax(y_test[i]))
         print('  Predicted class:    %d' % lgt_pred)
         print('  Class rankings (legitimate):', get_ranking(sess, logits[0]))
+        target_label = target if targeted else np.argmax(y_test[i])
+        if targeted and lgt_pred == target_label:
+            print('Ground truth label is target: skip image %d' % i)
+            continue
         if lgt_pred != np.argmax(y_test[i]):
             print('Wrong prediction: skip image %d' % i)
             continue
 
         # generate adversarial image from test set on fly
         print('Generating adversarial image %d' % i)
-        x_adv = adversary.generate(sess, x_test[i], np.argmax(y_test[i]),
+        x_adv = adversary1.generate(sess, x_test[i], target_label,
             eps_val=eps_val, num_steps=num_steps)[-1]
         y_adv = y_test[i]
         sess.run(assign_op, feed_dict={x: x_adv})
         logits, pred = sess.run([model.logits, prediction])
-        if pred != np.argmax(y_adv): # successful attack
+        if (not targeted and pred != np.argmax(y_adv)) or\
+           (targeted and pred == target_label): # successful attack
             print('  Changed prediction %d -> %d' % (lgt_pred, pred))
         else:
             print('  Unsuccessful attack: skip image %d' % i)
@@ -245,16 +240,21 @@ def backtrack():
         ranking = get_ranking(sess, logits[0])
         gt_rank_adv[ranking.index(lgt_pred)] += 1
         print('  Class rankings (clean adversarial):', ranking)
+        l1, l2, linf = evaluate_perturbation(x_adv - x_test[i])
+        print('  Perturbation L1  : %f' % l1)
+        print('  Perturbation L2  : %f' % l2)
+        print('  Perturbation Linf: %f' % linf)
 
         # apply adequate noise to the adversarial image
         print('Applying noise to adversarial image %d' % i)
         max_loss = -1.
         for n in range(noise_sampling_n): # search for random noise that maximize the loss
             #noise = (np.random.rand(32, 32, 3) - 0.5) * eps_val * 2
-            noise = ((np.random.rand(32, 32, 3) >= 0.5) - 0.5) * eps_val * 4
+            noise = np.random.rand(32, 32, 3)
+            noise = ((noise >= 0.5) - 0.5) * eps_val * 2 * noise_scale
             noisy_img = x_adv + noise
             sess.run(assign_op, feed_dict={x: noisy_img})
-            loss = sess.run(adversary.loss, feed_dict={adversary.y_adv: pred})
+            loss = sess.run(adversary1.loss, feed_dict={adversary1.y_adv: pred})
             if loss > max_loss:
                 max_loss = loss
                 sample_x = noisy_img
@@ -272,12 +272,16 @@ def backtrack():
 
         # attack the adversarial image
         print('Recovering adversarial image %d' % i)
-        #clipping_base = sample_x # using noisy one as base is much better than the clean one
-        clipping_base = scipy.ndimage.filters.gaussian_filter(sample_x, sigma=0.5)
-        step_scale = 1.
-        loss_thresh = None#1.#0.6931472 # TODO try different values
-        result_img = adversary.generate(sess, clipping_base, pred,
-            eps_val=eps_val, num_steps=int(num_steps/step_scale), step_scale=step_scale, loss_thresh=loss_thresh)
+        if sigma is None:
+            # using noisy one as base is much better than the clean one
+            clipping_base = sample_x
+        else:
+            clipping_base = scipy.ndimage.filters.gaussian_filter(sample_x, sigma=sigma)
+        result_img = adversary2.generate(sess, clipping_base, pred,
+            eps_val=eps_val,
+            num_steps=int(recover_num_steps/recover_step_scale),
+            step_scale=recover_step_scale,
+            loss_thresh=recover_loss_thresh)
         result_imgs.append(result_img)
 
         # evaluate recovery status
@@ -298,10 +302,18 @@ def backtrack():
         print('  Perturbation L1  : %f' % l1)
         print('  Perturbation L2  : %f' % l2)
         print('  Perturbation Linf: %f' % linf)
+        avg_l1 += l1
+        avg_l2 += l2
+        avg_linf += linf
+
+    recovery_rate = recovered / len(result_imgs)
+    avg_l1 /= len(result_imgs)
+    avg_l2 /= len(result_imgs)
+    avg_linf /= len(result_imgs)
 
     print()
     print('Recovery attempts: %d/%d' % (len(result_imgs), num_samples))
-    print('Recovery rate: %f' % (recovered / len(result_imgs)))
+    print('Recovery rate: %f' % recovery_rate)
 
     print('Ranking percentage of ground truth label (clean adversarial)')
     for i in range(10):
@@ -313,8 +325,61 @@ def backtrack():
     for i in range(10):
         print('  #%d: %f' % (i + 1, gt_rank_rc[i] / len(result_imgs)))
 
-if __name__ == '__main__':
-    #adv_train()
-    #adv_test()
+    return recovery_rate, avg_l1, avg_l2, avg_linf
 
-    backtrack()
+if __name__ == '__main__':
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    sess = tf.Session(config=config)
+
+    x = tf.placeholder(tf.float32, [32, 32, 3])
+    x_adv_ = tf.Variable(tf.zeros([32, 32, 3]))
+    y_= tf.placeholder(tf.float32, [1, 10])
+
+    assign_op = tf.assign(x_adv_, x)
+    model = build_graph_init(x_adv_, sess, expand_dim=True, pretrained=PRETRAINED_PATH)
+    prediction = tf.squeeze(tf.argmax(model.logits, axis=1))
+    accuracy = eval_acc(model.logits, y_)
+
+    # non-targeted attack multistep recovery with noise and gaussian base clipping
+    #backtrack(target=None, noise_scale=2, sigma=0.5)
+
+    # targeted attack single step recovery
+    #backtrack(target=1, noise_scale=0, sigma=None, recover_step_scale=100.)
+
+    '''
+    backtrack(
+        attack_method='FG',
+        target=None,
+        noise_scale=2.,
+        sigma=0.5,
+        attack_optimize_method='sgd',
+        recover_optimize_method='sgd',
+        recover_step_scale=100./5)
+
+    '''
+    parameter_dict = {
+        'attack_method': ['FG'],
+        'target': [None],
+        'eps_val': [0.02],# 0.08, 0.14, 0.20],
+        'noise_scale': [2.],# 0.25, 0.5, 1.0, 2.0, 4.0],
+        'sigma': [0.5],# 0.25, 0.5, 0.75, 1.0],
+        'attack_optimize_method': ['sgd'],# 'momentum', 'adam'],
+        'recover_optimize_method': ['sgd'],# 'momentum', 'adam'],
+        'recover_step_scale': [0.5, 1., 2., 5., 10., 20., 50., 100.],
+    }
+    from itertools import product
+    f = open('./backtrack_results.txt', 'w')
+    for d in product(*[[(k, v) for v in l] for k, l in parameter_dict.items()]):
+        rr, l1, l2, linf = backtrack(**dict(d))
+        f.write('Parameters:\n')
+        for k, v in d:
+            f.write('  ' + k + '=' + str(v) + '\n')
+        f.write('Results:\n')
+        f.write('  Recovery rate=%f\n' % rr)
+        f.write('  Average L1=%f\n' % l1)
+        f.write('  Average L2=%f\n' % l2)
+        f.write('  Average Linf=%f\n' % linf)
+        f.write('\n')
+        f.flush()
+    f.close()

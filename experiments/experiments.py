@@ -116,6 +116,7 @@ class SGDLearningRateTracker(Callback):
 def train_keras_classifier():
     from cifar10_classifier import Classifier
     from keras.optimizers import SGD
+    from keras import backend as K
 
     batch_size = 128
     epochs = 50
@@ -159,7 +160,7 @@ def train_keras_classifier():
     sess = get_session()
     saver = tf.train.Saver()
     saver.save(sess, PRETRAINED_PATH)
-    print('Saved trained model at %s ' % PRETRAINED_PATH)
+    print('Saved trained model at %s ' % (PRETRAINED_PATH))
 
     # evaluate on test set
     scores = model.evaluate(x_test, y_test, verbose=1)
