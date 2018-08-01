@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 class Generator():
-    def __init__(self, method, imgsize, conv_input, logits, targeted=True, cls_no=10, optimize_method='sgd'):
+    def __init__(self, method, imgsize, imgmin, imgmax, conv_input, logits, targeted=True, cls_no=10, optimize_method='sgd'):
         imgshape = (imgsize, imgsize, 3)
         self.x = tf.placeholder(tf.float32, imgshape)
         self.y_adv = tf.placeholder(tf.int32, ())
@@ -49,7 +49,7 @@ class Generator():
 
         below = self.x - self.epsilon
         above = self.x + self.epsilon
-        projected = tf.clip_by_value(tf.clip_by_value(self.x_adv, below, above), 0, 1)
+        projected = tf.clip_by_value(tf.clip_by_value(self.x_adv, below, above), imgmin, imgmax)
         with tf.control_dependencies([projected]):
             self.project_step = tf.assign(self.x_adv, projected)
 

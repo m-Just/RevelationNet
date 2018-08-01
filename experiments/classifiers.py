@@ -1,6 +1,17 @@
 import tensorflow as tf
+import tensorflow.contrib.slim.nets as nets
+slim = tf.contrib.slim
 
-class Classifier(object):
+class Resnet_v2_101(object):
+    def __init__(self, x, expand_dim=True, output_units=1001, is_training=False):
+        if expand_dim:
+            x = tf.expand_dims(x, 0)
+        with slim.arg_scope(nets.resnet_utils.resnet_arg_scope()):
+            net, end_points = nets.resnet_v2.resnet_v2_101(
+                x, num_classes=output_units, is_training=is_training)
+        self.logits = tf.squeeze(end_points['resnet_v2_101/logits'], [1,2])
+
+class SimpleCNN(object):
     def __init__(self, x, regularizer=None, expand_dim=True,
         output_units=10,
         conv_layer=tf.layers.conv2d,
@@ -13,7 +24,8 @@ class Classifier(object):
 
         if expand_dim:
             x = tf.expand_dims(x, 0)
-        self.build_graph(x)
+        with tf.variable_scope('conv'):
+            self.build_graph(x)
         
     def build_graph(self, x):
         prev_layer = self.conv_layer(
@@ -93,7 +105,7 @@ class Classifier(object):
             name = 'dense_3',
         )
 
-class NoisyClassifier(Classifier):
+class NoisyClassifier(SimpleCNN):
     def __init__(self, x, expand_dim=True,
         noise_on_conv=None,
         noise_on_dense='uniform',
@@ -188,7 +200,7 @@ class NoisyClassifier(Classifier):
 
         return activation(tf.nn.bias_add(tf.matmul(inputs, kernel), bias))
 
-class InputPerturbedClassifier(Classifier):
+class InputPerturbedClassifier(SimpleCNN):
     def __init__(self, x, minval, maxval):
         self.regularizer = None
         self.conv_layer = tf.layers.conv2d
