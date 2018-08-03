@@ -9,12 +9,13 @@ import scipy
 import tensorflow as tf
 from keras.preprocessing.image import ImageDataGenerator
 
+import cv2
 import matplotlib.pyplot as plt
 from skimage.transform import resize
 
 from classifiers import SimpleCNN, Resnet_v2_101
 import data_loader
-from gradient_attack import Generator, Tracker
+from gradient_attack import Generator, Tracker, Navigator, Backtracker
 
 def build_graph_init(Classifier, x, sess, expand_dim=False, pretrained=None,
                      scope='conv'):
@@ -54,7 +55,7 @@ def evaluate_perturbation(p):
     l_inf = np.max(abs_p)
     return l_one, l_two, l_inf
     
-def get_ranking(sess, logits):
+def get_ranking(logits):
     ranking = [(label, logit) for label, logit in enumerate(logits)]
     ranking.sort(key=lambda x: x[1], reverse=True)
     return [label for label, logit in ranking]
@@ -87,7 +88,8 @@ def direction_tracking(att_path, rec_path):
 def backtrack(attack_method='FG', target=None, eps_val=0.02, recover_eps_val=0.02,
               num_steps=100, noise_scale=1., sigma=0.5, recover_num_steps=100,
               attack_optimize_method='sgd', recover_optimize_method='sgd',
-              recover_step_scale=1., recover_loss_thresh=None, use_tracker=False):
+              recover_step_scale=1., recover_loss_thresh=None,
+              use_experiment=None):
 
     eps_val = eps_val * (IMAGE_MAX - IMAGE_MIN)
     recover_eps_val = recover_eps_val * (IMAGE_MAX - IMAGE_MIN)
@@ -98,9 +100,15 @@ def backtrack(attack_method='FG', target=None, eps_val=0.02, recover_eps_val=0.0
                            x_adv_, model.logits, targeted=targeted,
                            optimize_method=attack_optimize_method,
                            cls_no=NUM_CLASSES)
-    if use_tracker:
+    if use_experiment == 'tracker':
         adversary2 = Tracker(IMGSIZE, IMAGE_MIN, IMAGE_MAX, x_adv_, model.logits,
                              num_classes=NUM_CLASSES)
+    elif use_experiment == 'navigator':
+        adversary2 = Navigator(IMGSIZE, IMAGE_MIN, IMAGE_MAX, x_adv_,
+                               model.logits, num_classes=NUM_CLASSES)
+    elif use_experiment == 'backtracker':
+        adversary2 = Backtracker(IMGSIZE, IMAGE_MIN, IMAGE_MAX, x_adv_,
+                                 model.logits, num_classes=NUM_CLASSES)
     else:
         adversary2 = Generator('FG', IMGSIZE, IMAGE_MIN, IMAGE_MAX, x_adv_,
                                model.logits, targeted=False,
@@ -116,12 +124,13 @@ def backtrack(attack_method='FG', target=None, eps_val=0.02, recover_eps_val=0.0
     result_imgs = []
 
     for i in range(num_samples):
+        #if i not in [26, 49, 57, 63, 85, 91]: continue
         sess.run(assign_op, feed_dict={x: x_test[i]})
-        logits, lgt_pred = sess.run([model.logits, prediction])
+        lgt_logits, lgt_pred = sess.run([model.logits, prediction])
         print('\nLegitimate image %d' % i)
         print('  Ground-truth label: %d' % np.argmax(y_test[i]))
         print('  Predicted class:    %d' % lgt_pred)
-        print('  Class rankings (legitimate):', get_ranking(sess, logits[0])[:10])
+        print('  Class rankings (legitimate):', get_ranking(lgt_logits[0])[:10])
         target_label = target if targeted else np.argmax(y_test[i])
         if targeted and lgt_pred == target_label:
             print('Ground truth label is target: skip image %d' % i)
@@ -144,7 +153,7 @@ def backtrack(attack_method='FG', target=None, eps_val=0.02, recover_eps_val=0.0
         else:
             print('  Unsuccessful attack: skip image %d' % i)
             continue
-        ranking = get_ranking(sess, logits[0])
+        ranking = get_ranking(logits[0])
         gt_rank_adv[ranking.index(lgt_pred)] += 1
         print('  Class rankings (clean adversarial):', ranking[:10])
         l1, l2, linf = evaluate_perturbation(x_adv - x_test[i])
@@ -176,7 +185,7 @@ def backtrack(attack_method='FG', target=None, eps_val=0.02, recover_eps_val=0.0
             #    print('Noise changed prediction: skip image %d' % i)
             #    continue
             logits = sess.run(model.logits)
-            ranking = get_ranking(sess, logits[0])
+            ranking = get_ranking(logits[0])
             gt_rank_noisy[ranking.index(lgt_pred)] += 1
             print('  Class rankings (noisy adversarial):', ranking[:10])
 
@@ -189,8 +198,17 @@ def backtrack(attack_method='FG', target=None, eps_val=0.02, recover_eps_val=0.0
             clipping_base = scipy.ndimage.filters.gaussian_filter(sample_x,
                 sigma=sigma)
 
-        if use_tracker:
+        if use_experiment == 'tracker':
             result_path = adversary2.generate(sess, x_adv,
+                num_steps=int(recover_num_steps/recover_step_scale),
+                step_scale=recover_step_scale)
+        elif use_experiment == 'navigator':
+            result_path = adversary2.generate(sess, x_adv, pred, 0.001, 10,
+                num_steps=int(recover_num_steps/recover_step_scale),
+                step_scale=recover_step_scale)
+        elif use_experiment == 'backtracker':
+            result_path = adversary2.generate(sess, x_adv, pred,
+                eps_val=recover_eps_val,
                 num_steps=int(recover_num_steps/recover_step_scale),
                 step_scale=recover_step_scale)
         else:
@@ -211,15 +229,42 @@ def backtrack(attack_method='FG', target=None, eps_val=0.02, recover_eps_val=0.0
             recovered += 1
         else:
             print('Image %d failed to recover' % i)
-        ranking = get_ranking(sess, r_logits[0])
+            '''
+            n_count = [0 for _ in range(NUM_CLASSES)]
+            for k in range(100):
+                noise = np.random.rand(IMGSIZE, IMGSIZE, 3)
+                noise = (noise >= 0.5) * 2. - 1.
+                n_img = result_img + noise * eps_val * 2
+                sess.run(assign_op, feed_dict={x: n_img})
+                n_pred = sess.run(prediction)
+                n_count[n_pred] += 1
+                
+            n_max = max(n_count)
+            for cls, cnt in enumerate(n_count):
+                if n_max == cnt: s_pred = cls
+            print('  ' + str(n_count))
+            print(lgt_logits[0])
+            sess.run(assign_op, feed_dict={x: (result_img + x_adv) / 2.})
+            s_logits, s_pred = sess.run([model.logits, prediction])
+            print('  ' + str(get_ranking(s_logits[0])))
+            print('  Suggested class:    %d' % s_pred)
+            '''
+
+        ranking = get_ranking(r_logits[0])
         gt_rank_rc[ranking.index(lgt_pred)] += 1
         print('  Ground-truth label: %d' % np.argmax(sample_y))
         print('  Predicted class:    %d' % r_pred)
         print('  Class rankings (after attempted recovery):', ranking[:10])
         l1, l2, linf = evaluate_perturbation(result_img - x_test[i])
-        print('  Perturbation L1  : %f' % l1)
-        print('  Perturbation L2  : %f' % l2)
-        print('  Perturbation Linf: %f' % linf)
+        print('  Perturbation (recovered - legitimate)')
+        print('    L1  : %f' % l1)
+        print('    L2  : %f' % l2)
+        print('    Linf: %f' % linf)
+        l1, l2, linf = evaluate_perturbation(result_img - x_adv)
+        print('  Perturbation (recovered - adversarial)')
+        print('    L1  : %f' % l1)
+        print('    L2  : %f' % l2)
+        print('    Linf: %f' % linf)
         avg_l1 += l1
         avg_l2 += l2
         avg_linf += linf
@@ -343,7 +388,6 @@ if __name__ == '__main__':
     # targeted attack single step recovery
     #backtrack(target=1, noise_scale=0, sigma=None, recover_step_scale=100.)
 
-    '''
     backtrack(
         attack_method='FG',
         target=0,
@@ -351,21 +395,21 @@ if __name__ == '__main__':
         sigma=None,
         attack_optimize_method='sgd',
         recover_optimize_method='sgd',
-        recover_step_scale=100.,
-        recover_eps_val=0.04,
-        use_tracker=False)
+        recover_step_scale=1.,
+        #recover_eps_val=0.04,
+        use_experiment=None)#'backtracker')
 
     '''
     parameter_dict = {
         'attack_method': ['FG'],
         'target': [0],
-        'eps_val': [0.02],#[0.01, 0.02, 0.03, 0.04],# 0.08, 0.14, 0.20],
-        #'recover_eps_val': [0.01, 0.02, 0.04, 0.08],
-        'noise_scale': [0., 0.25, 0.5, 1.0, 2.0, 4.0],
-        'sigma': [None, 0.25, 0.5, 0.75, 1.0],
+        'eps_val': [0.01, 0.02, 0.03, 0.04],# 0.08, 0.14, 0.20],
+        'recover_eps_val': [0.01, 0.02, 0.04, 0.08],
+        'noise_scale': [0.],# 0.25, 0.5, 1.0, 2.0, 4.0],
+        'sigma': [None],# 0.25, 0.5, 0.75, 1.0],
         'attack_optimize_method': ['sgd'],# 'momentum', 'adam'],
         'recover_optimize_method': ['sgd'],# 'momentum', 'adam'],
-        'recover_step_scale': [100.],# 10., 100.],
+        'recover_step_scale': [1.],# 10., 100.],
     }
     from itertools import product
     f = open('./logs/backtrack_results.txt', 'w')
@@ -382,3 +426,17 @@ if __name__ == '__main__':
         f.write('\n')
         f.flush()
     f.close()
+    '''
+
+    #target=0, single step, fgm clean
+    #  failed(26, 49, 57, 63, 85, 91) 74 0.918919
+    #target=0, single step, navigator(0.001, 10):
+    #  failed(42, 49, 57, 63, 65, 91) 74 0.918919
+    #target=0, single step, navigator(0.001, 100):
+    #  failed(42, 57, 63, 85, 91) 74 0.932432
+    #target=0, single step, navigator(0.001, 500):
+    #  failed(42, 49, 57, 63, 85, 91) 74 0.918919
+    #target=0, single step, navigator(0.01, 10):
+    #  failed(i25, 33, 46, 53, 57, 63, 85, 87, 91) 74 0.878378
+    #target=0, single step, navigator(0.01, 100):
+    #  failed(17, 25, 26, 33, 46, 53, 57, 63, 68, 71, 85, 91) 74 0.824324
