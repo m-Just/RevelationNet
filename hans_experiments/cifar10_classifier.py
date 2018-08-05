@@ -166,6 +166,20 @@ class ReLU(Layer):
     def get_params(self):
         return []
 
+class Dropout(Layer):
+    
+    def __init__(self, keep_prob):
+        self.keep_prob = keep_prob
+
+    def set_input_shape(self, shape):
+        self.input_shape = shape
+        self.output_shape = shape
+
+    def fprop(self, x):
+        return tf.nn.dropout(x, keep_prob)
+
+    def get_params(self):
+        return []
 
 class Softmax(Layer):
 
@@ -327,6 +341,59 @@ def make_simple_cnn(num_filters=64, num_classes=10,
               LinearLayer(num_filters * 4),
               ReLU(),
               LinearLayer(num_classes),
+              Softmax()]
+
+    model = MLP(layers, input_shape)
+    return model
+
+def make_vgg16(num_classes, input_shape, keep_prob):
+
+    assert keep_prob > 0 and keep_prob <= 1
+
+    layers = [Conv2D(64, (3, 3), (1, 1), 'SAME'),
+              ReLU(),
+              Conv2D(64, (3, 3), (1, 1), 'SAME'),
+              ReLU(),
+              Pooling('max'),
+
+              Conv2D(128, (3, 3), (1, 1), 'SAME'),
+              ReLU(),
+              Conv2D(128, (3, 3), (1, 1), 'SAME'),
+              ReLU(),
+              Pooling('max'),
+
+              Conv2D(256, (3, 3), (1, 1), 'SAME'),
+              ReLU(),
+              Conv2D(256, (3, 3), (1, 1), 'SAME'),
+              ReLU(),
+              Conv2D(256, (3, 3), (1, 1), 'SAME'),
+              ReLU(),
+              Pooling('max'),
+
+              Conv2D(512, (3, 3), (1, 1), 'SAME'),
+              ReLU(),
+              Conv2D(512, (3, 3), (1, 1), 'SAME'),
+              ReLU(),
+              Conv2D(512, (3, 3), (1, 1), 'SAME'),
+              ReLU(),
+              Pooling('max'),
+
+              Conv2D(512, (3, 3), (1, 1), 'SAME'),
+              ReLU(),
+              Conv2D(512, (3, 3), (1, 1), 'SAME'),
+              ReLU(),
+              Conv2D(512, (3, 3), (1, 1), 'SAME'),
+              ReLU(),
+              Pooling('max'),
+
+              Flatten(),
+              Linear(4096),
+              ReLU(),
+              Dropout(keep_prob),
+              Linear(4096),
+              ReLU(),
+              Dropout(keep_prob),
+              Linear(num_classes),
               Softmax()]
 
     model = MLP(layers, input_shape)
